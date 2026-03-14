@@ -2,6 +2,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
 
+from .faults import FaultSpec
+
 @dataclass
 class ActuatorLimits:
     alpha_rate_deg_s: float = 200.0
@@ -33,9 +35,29 @@ def rate_limit(current: np.ndarray, target: np.ndarray, max_rate_per_s: float, d
     delta = np.clip(delta, -max_step, max_step)
     return current + delta
 
-def apply_actuator_limits(state: AllocatorState, alpha_target_rad: np.ndarray, ft_target_n: np.ndarray, lim: ActuatorLimits, dt_s: float) -> AllocatorState:
+def rate_limit_per_axis(current: np.ndarray, target: np.ndarray, max_rate_per_s: np.ndarray, dt_s: float) -> np.ndarray:
+    max_step = max_rate_per_s * dt_s
+    delta = target - current
+    delta = np.clip(delta, -max_step, max_step)
+    return current + delta
+
+def apply_actuator_limits(
+    state: AllocatorState,
+    alpha_target_rad: np.ndarray,
+    ft_target_n: np.ndarray,
+    lim: ActuatorLimits,
+    dt_s: float,
+    fault: FaultSpec | None = None,
+) -> AllocatorState:
     alpha_rate_rad_s = np.deg2rad(lim.alpha_rate_deg_s)
-    alpha_next = rate_limit(state.alpha_rad, alpha_target_rad, alpha_rate_rad_s, dt_s)
+    if fault is not None and fault.slow_flap_idx is not None:
+        alpha_rate_rad_s_vec = np.full_like(alpha_target_rad, alpha_rate_rad_s, dtype=float)
+        i = int(fault.slow_flap_idx)
+        if 0 <= i < len(alpha_rate_rad_s_vec):
+            alpha_rate_rad_s_vec[i] *= float(fault.slow_flap_rate_scale)
+        alpha_next = rate_limit_per_axis(state.alpha_rad, alpha_target_rad, alpha_rate_rad_s_vec, dt_s)
+    else:
+        alpha_next = rate_limit(state.alpha_rad, alpha_target_rad, alpha_rate_rad_s, dt_s)
     ft_next = rate_limit(state.ft_tan_per_seg_n, ft_target_n, lim.ft_rate_n_s, dt_s)
     return AllocatorState(alpha_next, ft_next, state.plenum_scale.copy())
 
