@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING
 import numpy as np
 
@@ -24,6 +25,9 @@ class RingActuatorTopology:
     segment_count: int
     fan_to_segments: tuple[tuple[int, ...], ...]
     plenum_to_segments: tuple[tuple[int, ...], ...]
+    fan_nominal_sigma_segments: float = 0.0
+    fan_fault_sigma_segments: float = 0.0
+    plenum_fault_sigma_segments: float = 0.0
 
     @property
     def fan_count(self) -> int:
@@ -40,6 +44,9 @@ class RingActuatorTopology:
             segment_count=int(segment_count),
             fan_to_segments=fan_to_segments,
             plenum_to_segments=plenum_to_segments,
+            fan_nominal_sigma_segments=0.0,
+            fan_fault_sigma_segments=0.0,
+            plenum_fault_sigma_segments=0.0,
         )
 
     @classmethod
@@ -48,6 +55,9 @@ class RingActuatorTopology:
             segment_count=32,
             fan_to_segments=AURORA_FAN_TO_SEGMENTS_32,
             plenum_to_segments=AURORA_PLENUM_TO_SEGMENTS_32,
+            fan_nominal_sigma_segments=0.85,
+            fan_fault_sigma_segments=0.65,
+            plenum_fault_sigma_segments=0.50,
         )
 
     def fan_segments(self, fan_index: int) -> tuple[int, ...]:
@@ -60,19 +70,90 @@ class RingActuatorTopology:
             return self.plenum_to_segments[plenum_index]
         return ()
 
+    def _circular_segment_distance(self, a: int, b: int) -> float:
+        if self.segment_count <= 0:
+            return 0.0
+        raw = abs(int(a) - int(b))
+        return float(min(raw, self.segment_count - raw))
+
+    def _owned_distance_profile(self, owners: tuple[int, ...]) -> np.ndarray:
+        if self.segment_count <= 0:
+            return np.zeros(0, dtype=float)
+        if not owners:
+            return np.zeros(self.segment_count, dtype=float)
+        owner_list = tuple(int(idx) for idx in owners)
+        out = np.zeros(self.segment_count, dtype=float)
+        for seg_idx in range(self.segment_count):
+            out[seg_idx] = min(self._circular_segment_distance(seg_idx, owner) for owner in owner_list)
+        return out
+
+    def _fault_influence_profile(self, owners: tuple[int, ...], sigma_segments: float) -> np.ndarray:
+        dist = self._owned_distance_profile(owners)
+        if dist.size == 0:
+            return dist
+        sigma = float(max(0.0, sigma_segments))
+        if sigma <= 1e-9:
+            return (dist <= 1e-9).astype(float)
+        profile = np.exp(-0.5 * (dist / sigma) ** 2)
+        profile = np.clip(profile, 0.0, 1.0)
+        for owner in owners:
+            if 0 <= int(owner) < self.segment_count:
+                profile[int(owner)] = 1.0
+        return profile
+
+    @cached_property
+    def fan_segment_influence(self) -> np.ndarray:
+        if self.segment_count <= 0 or self.fan_count <= 0:
+            return np.zeros((self.fan_count, self.segment_count), dtype=float)
+        raw = np.zeros((self.fan_count, self.segment_count), dtype=float)
+        for fan_idx, segments in enumerate(self.fan_to_segments):
+            sigma = float(max(0.0, self.fan_nominal_sigma_segments))
+            if sigma <= 1e-9:
+                for seg_idx in segments:
+                    if 0 <= int(seg_idx) < self.segment_count:
+                        raw[fan_idx, int(seg_idx)] = 1.0
+            else:
+                raw[fan_idx, :] = self._fault_influence_profile(tuple(int(v) for v in segments), sigma)
+        col_sums = raw.sum(axis=0)
+        for seg_idx in range(self.segment_count):
+            if col_sums[seg_idx] <= 1e-12:
+                for fan_idx, segments in enumerate(self.fan_to_segments):
+                    if seg_idx in segments:
+                        raw[fan_idx, seg_idx] = 1.0
+                        break
+        col_sums = np.where(raw.sum(axis=0) > 1e-12, raw.sum(axis=0), 1.0)
+        return raw / col_sums[None, :]
+
+    @cached_property
+    def fan_effective_segment_counts(self) -> np.ndarray:
+        influence = self.fan_segment_influence
+        if influence.size == 0:
+            return np.zeros(self.fan_count, dtype=float)
+        return np.sum(influence, axis=1)
+
+    def smooth_segment_values(self, values) -> np.ndarray:
+        arr = np.asarray(values, dtype=float)
+        if arr.size == 0:
+            return arr.copy()
+        if arr.size != self.segment_count:
+            return default_ring_topology(int(arr.size)).smooth_segment_values(arr)
+        influence = self.fan_segment_influence
+        if influence.size == 0:
+            return arr.copy()
+        row_sums = np.where(self.fan_effective_segment_counts > 1e-12, self.fan_effective_segment_counts, 1.0)
+        fan_means = (influence @ arr) / row_sums
+        return influence.T @ fan_means
+
     def segment_values_to_fan_means(self, values) -> list[float]:
         arr = np.asarray(values, dtype=float)
         if arr.size == 0:
             return []
         if arr.size != self.segment_count:
             return default_ring_topology(int(arr.size)).segment_values_to_fan_means(arr)
-        out: list[float] = []
-        for segments in self.fan_to_segments:
-            if not segments:
-                out.append(0.0)
-                continue
-            out.append(float(np.mean(arr[list(segments)])))
-        return out
+        influence = self.fan_segment_influence
+        row_sums = np.where(self.fan_effective_segment_counts > 1e-12, self.fan_effective_segment_counts, 1.0)
+        weighted = influence @ arr
+        return [float(weighted[idx] / row_sums[idx]) for idx in range(self.fan_count)]
 
     def distribute_fan_means_to_segments(self, fan_mean_n, segment_targets_n) -> np.ndarray:
         fan_mean = np.asarray(fan_mean_n, dtype=float)
@@ -82,19 +163,38 @@ class RingActuatorTopology:
         if targets.size != self.segment_count:
             return default_ring_topology(int(targets.size)).distribute_fan_means_to_segments(fan_mean, targets)
 
+        influence = self.fan_segment_influence
+        row_sums = self.fan_effective_segment_counts
+        targets_pos = np.clip(targets, 0.0, None)
         out = np.zeros_like(targets)
-        for fan_idx, segments in enumerate(self.fan_to_segments):
-            if not segments:
+        for fan_idx in range(self.fan_count):
+            if fan_idx >= fan_mean.size:
+                break
+            total = float(row_sums[fan_idx] * float(fan_mean[fan_idx]))
+            if total <= 1e-12:
                 continue
-            seg_idx = list(segments)
-            pair_targets = np.clip(targets[seg_idx], 0.0, None)
-            pair_sum = float(np.sum(pair_targets))
-            pair_total = max(0.0, float(len(seg_idx)) * float(fan_mean[fan_idx])) if fan_idx < fan_mean.size else 0.0
-            if pair_sum <= 1e-9:
-                out[seg_idx] = pair_total / max(1, len(seg_idx))
-            else:
-                out[seg_idx] = pair_total * pair_targets / pair_sum
+            base = influence[fan_idx]
+            weights = base * targets_pos
+            weight_sum = float(np.sum(weights))
+            if weight_sum <= 1e-12:
+                weights = base.copy()
+                weight_sum = float(np.sum(weights))
+            if weight_sum <= 1e-12:
+                continue
+            out += total * weights / weight_sum
         return out
+
+    def fan_fault_influence_profile(self, fan_index: int) -> np.ndarray:
+        return self._fault_influence_profile(
+            self.fan_segments(int(fan_index)),
+            self.fan_fault_sigma_segments,
+        )
+
+    def plenum_fault_influence_profile(self, plenum_index: int) -> np.ndarray:
+        return self._fault_influence_profile(
+            self.plenum_segments(int(plenum_index)),
+            self.plenum_fault_sigma_segments,
+        )
 
     def effectiveness_map(self, fault: FaultSpec | None = None) -> RingEffectivenessMap:
         fan_index_by_segment = [-1] * self.segment_count
@@ -113,13 +213,11 @@ class RingActuatorTopology:
 
         if fault is not None:
             if fault.dead_fan_group is not None:
-                for idx in self.fan_segments(int(fault.dead_fan_group)):
-                    if 0 <= idx < self.segment_count:
-                        fan_scale[idx] *= float(fault.dead_fan_scale)
+                influence = self.fan_fault_influence_profile(int(fault.dead_fan_group))
+                fan_scale *= 1.0 - (1.0 - float(fault.dead_fan_scale)) * influence
             if fault.plenum_sector_idx is not None:
-                for idx in self.plenum_segments(int(fault.plenum_sector_idx)):
-                    if 0 <= idx < self.segment_count:
-                        plenum_scale[idx] *= float(fault.plenum_sector_scale)
+                influence = self.plenum_fault_influence_profile(int(fault.plenum_sector_idx))
+                plenum_scale *= 1.0 - (1.0 - float(fault.plenum_sector_scale)) * influence
 
         return RingEffectivenessMap(
             fan_index_by_segment=tuple(fan_index_by_segment),

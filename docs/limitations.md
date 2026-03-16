@@ -108,7 +108,7 @@ If the real hardware cannot safely deliver that burst reserve, the maneuver stat
 Important current simplifications include:
 
 - topology is explicit but still simple
-- fan ownership is pair-based for the default 32-segment ring
+- default 32-segment Aurora fan ownership is pair-based structurally, but nominal aggregation and redistribution are now locally smoothed
 - plenum ownership is one-sector-per-segment in the current model
 - many traces use scenario-specific fields rather than a frozen versioned schema per family
 - the controller is strongest in planar lateral motion and yaw-hold rather than full aircraft control

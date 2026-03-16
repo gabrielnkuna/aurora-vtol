@@ -6,6 +6,7 @@ Related docs:
 
 - [Architecture](architecture.md)
 - [Module Reference](module_reference.md)
+- [Effectiveness Map](effectiveness_map.md)
 - [Fault Model](fault_model.md)
 - [Trace Schema](trace_schema.md)
 
@@ -26,11 +27,17 @@ Current fields:
 - `segment_count`
 - `fan_to_segments`
 - `plenum_to_segments`
+- `fan_nominal_sigma_segments`
+- `fan_fault_sigma_segments`
+- `plenum_fault_sigma_segments`
 
 Key helpers:
 
 - `fan_segments(fan_index)`
 - `plenum_segments(plenum_index)`
+- `fan_segment_influence`
+- `fan_effective_segment_counts`
+- `smooth_segment_values(values)`
 - `segment_values_to_fan_means(values)`
 - `distribute_fan_means_to_segments(fan_mean_n, segment_targets_n)`
 - `effectiveness_map(fault)`
@@ -58,7 +65,7 @@ Aurora's default ring assumes:
 
 ### Fan mapping
 
-The current default mapping is a simple even-pair ownership model:
+The current default structural ownership mapping is still a simple even-pair model:
 
 ```text
 fan 00 -> segments 00, 01
@@ -70,9 +77,16 @@ fan 15 -> segments 30, 31
 
 In code, this is `AURORA_FAN_TO_SEGMENTS_32`.
 
+For the default Aurora `32`-segment ring, nominal fan aggregation and redistribution are no longer strictly pair-local. The topology now applies a small local angular influence profile around each fan group's owned pair when:
+
+- aggregating segment-level values into fan-group means
+- redistributing fan-group means back to segments
+
+That nominal smoothing is controlled by `fan_nominal_sigma_segments` and is currently only enabled on the default Aurora `32`-segment topology. Generic fallback topologies keep strict pair ownership.
+
 ### Plenum mapping
 
-The current plenum mapping is one plenum sector per control segment:
+The current plenum ownership mapping is one plenum sector per control segment:
 
 ```text
 plenum 00 -> segment 00
@@ -94,28 +108,37 @@ That is useful for generic ring experiments, but it should be treated as a model
 
 ## How topology affects the rest of the stack
 
-Topology is used in three important ways.
+Topology is used in four important ways.
 
 ### 1. Fault ownership
 
-Dead-fan and plenum faults do not reduce the whole ring uniformly. They reduce only the segments owned by the affected fan group or plenum sector.
+Dead-fan and plenum faults do not reduce the whole ring uniformly. They now reduce the owned segments most strongly and apply a small geometry-aware spillover to immediate neighbors on the 32-segment Aurora ring.
 
-### 2. Command aggregation
+### 2. Nominal force smoothing
+
+The allocator's nominal force evaluation now uses `smooth_segment_values(...)` to estimate how fan-group coupling softens purely segment-local force assumptions on the default Aurora ring. That means nominal wrench estimates are no longer based on a completely independent-segment fiction.
+
+### 3. Command aggregation
 
 Many plant and telemetry paths carry segment-level values but summarize fan behavior at the 16-group level. `segment_values_to_fan_means(...)` is the explicit conversion point.
 
-### 3. Redistribution
+On the default Aurora ring, this aggregation now uses the nominal fan influence matrix rather than a pure two-segment average. That makes grouped thrust and power paths slightly more mechanically realistic while preserving a stable grouped interface.
+
+### 4. Redistribution
 
 Some plant paths start from fan-group means and then redistribute them back to segments using the current segment targets. `distribute_fan_means_to_segments(...)` is the current implementation for that step.
+
+On the default Aurora ring, redistribution is also influenced by the nominal fan influence matrix. Segment targets still bias where the group mean goes, but the topology now enforces a small local spread instead of allowing a perfectly pair-isolated redistribution.
 
 ## Current engineering assumptions
 
 The topology layer is explicit, which is good, but it is still simple. Current assumptions include:
 
-- each fan group influences exactly two segments
-- each plenum sector influences exactly one segment
-- there is no cross-sector mixing model in `topology.py`
-- no geometry-derived effectiveness matrix exists yet
+- each fan group still has two structurally owned segments
+- each plenum sector influences exactly one owned segment
+- nominal fan aggregation and redistribution on the default Aurora ring use a local angular influence profile rather than strict pair isolation
+- there is still no full CAD- or CFD-derived effectiveness matrix in `topology.py`
+- current fault spillover is still a local angular falloff around the owned fan group or plenum sector
 - the mapping is ordinal, not yet CAD-derived
 
 This means the topology layer is strong enough for grouped authority studies and fault ownership, but it is not yet a high-fidelity aerodynamic or ducting model.
@@ -137,7 +160,7 @@ The next topology upgrades should be:
 1. replace the simple pair mapping with hardware-derived ownership where needed
 2. add geometry-aware effectiveness weights instead of pure ownership scalars
 3. distinguish structural ownership from aerodynamic influence
-4. encode any real plenum cross-coupling explicitly rather than assuming one-sector isolation
+4. encode any real plenum cross-coupling explicitly rather than relying only on the current local fault spillover
 5. freeze the hardware-facing mapping once the mechanical design is mature enough
 
 ## Truth boundary

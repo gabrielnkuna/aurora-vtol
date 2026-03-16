@@ -9,6 +9,7 @@ See also:
 - [Engineering Notes](engineering_notes.md)
 - [Command Reference](command_reference.md)
 - [Topology](topology.md)
+- [Effectiveness Map](effectiveness_map.md)
 - [Fault Model](fault_model.md)
 - [Trace Schema](trace_schema.md)
 
@@ -58,13 +59,23 @@ Typical concepts:
 
 ### `topology.py`
 
-Vehicle topology and effectiveness mapping.
+Vehicle topology and structural ownership mapping.
 
 Responsibilities:
 
 - represent the 16-fan / 32-segment concept
 - map fan-group and plenum-sector degradation onto segment authority
 - centralize topology assumptions that would otherwise become implicit
+
+### `effectiveness.py`
+
+Nominal authority-table loading and smoothing helpers.
+
+Responsibilities:
+
+- load versioned nominal effectiveness-table assets and geometry seed specs
+- provide a stable software interface for hardware-facing authority maps
+- separate provisional nominal authority data from allocator math
 
 ### `vehicle_controller.py`
 

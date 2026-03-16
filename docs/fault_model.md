@@ -109,7 +109,7 @@ Current fields:
 
 Effect:
 
-- the topology layer reduces the authority of the segments owned by that fan group
+- the topology layer reduces the authority of the owned segments most strongly and applies a smaller local angular spillover to neighboring segments on the default 32-segment Aurora ring
 - this currently works through segment effectiveness scaling, not through a detailed motor or ESC failure model
 
 ### 6. Degraded plenum sector
@@ -123,7 +123,7 @@ Current fields:
 
 Effect:
 
-- the topology layer reduces authority on the affected sector
+- the topology layer reduces authority on the affected sector most strongly and applies a smaller local spillover to adjacent sectors on the default 32-segment Aurora ring
 - this represents local flow degradation, not full fluid-dynamic truth
 
 ## Command-side vs achieved-side behavior
@@ -166,8 +166,8 @@ Dead-fan and plenum faults are topology-aware.
 
 That means:
 
-- `dead_fan_group` reduces only the segments owned by that fan group
-- `plenum_sector_idx` reduces only the segments owned by that plenum sector
+- `dead_fan_group` reduces the owned segments most strongly, with limited angular spillover to nearby segments on the default 32-segment Aurora ring
+- `plenum_sector_idx` reduces the owned sector most strongly, with limited local spillover to nearby sectors on the default 32-segment Aurora ring
 
 This behavior comes from the topology layer rather than ad hoc fault math scattered across the simulator.
 

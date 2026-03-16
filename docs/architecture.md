@@ -38,6 +38,7 @@ Companion docs:
 - [Bridge Workflows](bridge_workflows.md)
 - [Command Reference](command_reference.md)
 - [Topology](topology.md)
+- [Effectiveness Map](effectiveness_map.md)
 - [Fault Model](fault_model.md)
 - [Hardware Control Architecture](hardware_control_architecture.md)
 
@@ -169,7 +170,7 @@ plant / mission / assessment
 telemetry + trace export + bridge output
 ```
 
-That split is now reflected in the repo structure through [`src/aurora_gates/icd.py`](../src/aurora_gates/icd.py), [`src/aurora_gates/vehicle_controller.py`](../src/aurora_gates/vehicle_controller.py), and [`src/aurora_gates/topology.py`](../src/aurora_gates/topology.py).
+That split is now reflected in the repo structure through [`src/aurora_gates/icd.py`](../src/aurora_gates/icd.py), [`src/aurora_gates/vehicle_controller.py`](../src/aurora_gates/vehicle_controller.py), [`src/aurora_gates/topology.py`](../src/aurora_gates/topology.py), and [`src/aurora_gates/effectiveness.py`](../src/aurora_gates/effectiveness.py).
 
 ## 4. Topology model
 

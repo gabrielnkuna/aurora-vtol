@@ -119,6 +119,7 @@ python scripts/trace_to_tlog.py --trace runs/trace_coordinates_medium.json --out
 - [Engineering Notes](docs/engineering_notes.md)
 - [Command Reference](docs/command_reference.md)
 - [Topology](docs/topology.md)
+- [Effectiveness Map](docs/effectiveness_map.md)
 - [Fault Model](docs/fault_model.md)
 - [Trace Schema](docs/trace_schema.md)
 - [Scenario Guide](docs/scenario_guide.md)
