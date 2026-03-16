@@ -10,6 +10,30 @@ It is intentionally split into two views:
 
 This is not a final mechanical design or certified avionics architecture.
 
+## Engineering Guardrails
+
+These points are intentional constraints on how Aurora should be developed and
+judged:
+
+- Mechanics win over visuals. A maneuver is only credible if the actuator,
+  power, thermal, and fault models can support it, not just because a replay or
+  dashboard looks convincing.
+- Bridge layers are first-class engineering components. The Mission Planner
+  replay path, SITL bridge, and future vehicle bridge must preserve units,
+  timing, health, limits, and failsafe behavior. They are not "just plumbing."
+- Software-first does not mean physics-last. It is acceptable to build the
+  guidance, allocator, and controller stack before hardware exists, but the
+  software must stay anchored to mechanical and electrical reality.
+- Modeled now vs real later must stay explicit. If something is synthetic,
+  assumed, or concept art, it should be labeled that way rather than presented
+  as validated hardware truth.
+- Honesty is part of the architecture. If a result is limited by continuous
+  power, actuator authority, structural assumptions, or bridge behavior, that is
+  the engineering result, not a presentation problem to hide.
+
+
+See also [engineering_review_checklist.md](/home/gabriel/projects/aurora-allocator-v4/docs/engineering_review_checklist.md) for the review standard we should apply to control, plant, and bridge changes.
+
 ## Modeled Now
 
 The current software stack models the vehicle at the force-allocation level.
@@ -326,3 +350,4 @@ If asked, "are the pictures accurate?" the answer is:
 
 - accurate as concept intent
 - not yet accurate as validated engineering truth
+

@@ -5,6 +5,7 @@ import numpy as np
 
 from .model import RingGeometry, segment_angles_rad, thrust_vectors_body, net_force_and_yaw_moment
 from .faults import FaultSpec
+from ..topology import default_ring_topology
 
 @dataclass(frozen=True)
 class AllocationRequest:
@@ -40,19 +41,8 @@ def _fault_has_effect(fault: FaultSpec | None) -> bool:
 
 
 def _segment_fault_scales(n: int, fault: FaultSpec | None) -> np.ndarray:
-    scale = np.ones(n, dtype=float)
-    if fault is None:
-        return scale
-    if fault.dead_fan_group is not None:
-        g = int(fault.dead_fan_group)
-        for idx in (2 * g, 2 * g + 1):
-            if 0 <= idx < n:
-                scale[idx] *= float(fault.dead_fan_scale)
-    if fault.plenum_sector_idx is not None:
-        idx = int(fault.plenum_sector_idx)
-        if 0 <= idx < n:
-            scale[idx] *= float(fault.plenum_sector_scale)
-    return np.clip(scale, 0.0, None)
+    topology = default_ring_topology(n)
+    return topology.segment_effectiveness_scales(fault)
 
 
 def _solve_radial_components_limited(theta: np.ndarray, target_xy: np.ndarray, caps: np.ndarray) -> np.ndarray:

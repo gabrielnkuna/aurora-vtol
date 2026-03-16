@@ -11,6 +11,9 @@ from .response import compute_step_metrics
 from .field import RepelField, repel_force_xy
 from .faults import FaultSpec, apply_command_faults_to_alpha, apply_faults_to_alpha, apply_faults_to_thrust
 from .trace import save_trace_json
+from ..icd import ActuatorHealthState, EstimatedVehicleState, GuidanceTarget, RedirectTarget
+from ..topology import default_ring_topology
+from ..vehicle_controller import XYVehicleControllerGains, command_directional_force, track_redirect_velocity, track_step_snap_brake, track_step_snap_reverse, track_xy_position
 
 @dataclass(frozen=True)
 class SimParams:
@@ -56,6 +59,8 @@ class PowerSystemParams:
     hover_power_w: float = 110000.0
     continuous_power_w: float = 125000.0
     peak_power_w: float = 165000.0
+    burst_duration_s: float = 4.0
+    burst_recharge_tau_s: float = 18.0
     aux_power_w: float = 2500.0
     thrust_power_exponent: float = 1.35
     flap_power_scale: float = 0.10
@@ -80,6 +85,7 @@ class PowerSystemState:
     power_w: float = 2500.0
     energy_used_wh: float = 0.0
     thrust_scale: float = 1.0
+    burst_reserve_j: float = 0.0
     fan_mean_n: np.ndarray = dc_field(default_factory=lambda: np.zeros(16, dtype=float))
     fan_temp_c: np.ndarray = dc_field(default_factory=lambda: np.full(16, 28.0, dtype=float))
     thermal_scale: np.ndarray = dc_field(default_factory=lambda: np.ones(16, dtype=float))
@@ -93,6 +99,7 @@ class PowerSystemState:
             power_w=power.aux_power_w,
             energy_used_wh=0.0,
             thrust_scale=1.0,
+            burst_reserve_j=burst_capacity_j(power),
             fan_mean_n=np.zeros(fan_count, dtype=float),
             fan_temp_c=np.full(fan_count, power.ambient_temp_c, dtype=float),
             thermal_scale=np.ones(fan_count, dtype=float),
@@ -102,6 +109,55 @@ class PowerSystemState:
 def smoothstep01(x: float) -> float:
     x = max(0.0, min(1.0, float(x)))
     return x * x * (3.0 - 2.0 * x)
+
+
+def burst_capacity_j(power: PowerSystemParams) -> float:
+    return max(0.0, (power.peak_power_w - power.continuous_power_w) * max(power.burst_duration_s, 0.0))
+
+
+def sustained_power_ratio(power: PowerSystemParams, power_w: float, burst_reserve_j: float) -> float:
+    continuous_limit = max(power.continuous_power_w, 1e-6)
+    raw_ratio = float(power_w) / continuous_limit
+    if raw_ratio <= 1.0:
+        return raw_ratio
+    capacity = burst_capacity_j(power)
+    if capacity <= 1e-9:
+        return raw_ratio
+    reserve_frac = max(0.0, min(1.0, float(burst_reserve_j) / capacity))
+    overload = raw_ratio - 1.0
+    return 1.0 + overload * (1.0 - reserve_frac)
+
+
+def clip_main_power_to_budget(
+    fan_actual_mean: np.ndarray,
+    thrust_pre_power: np.ndarray,
+    load_multiplier: float,
+    power_budget_w: float,
+    power: PowerSystemParams,
+    topology,
+    hover_per_seg_n: float,
+) -> tuple[np.ndarray, np.ndarray, float, float]:
+    budget_w = max(power.aux_power_w, float(power_budget_w))
+    peak_budget_w = max(1e-6, budget_w - power.aux_power_w)
+    main_load_w = max(1e-6, budget_w - power.aux_power_w)
+    scale = 1.0
+    power_w = power.aux_power_w
+    thrust_actual = topology.distribute_fan_means_to_segments(fan_actual_mean, thrust_pre_power)
+    thrust_ratio = np.clip(thrust_actual / hover_per_seg_n, 0.0, None)
+    mean_thrust_ratio = float(np.mean(thrust_ratio)) if thrust_ratio.size else 0.0
+    main_power_w = power.hover_power_w * (mean_thrust_ratio ** power.thrust_power_exponent)
+    power_w = power.aux_power_w + main_power_w * load_multiplier
+    if power_w > budget_w:
+        main_load_w = max(1e-6, power_w - power.aux_power_w)
+        scale = (peak_budget_w / main_load_w) ** (1.0 / max(power.thrust_power_exponent, 1e-6))
+        scale = max(power.min_supply_scale, min(1.0, scale))
+        fan_actual_mean = fan_actual_mean * scale
+        thrust_actual = topology.distribute_fan_means_to_segments(fan_actual_mean, thrust_pre_power)
+        thrust_ratio = np.clip(thrust_actual / hover_per_seg_n, 0.0, None)
+        mean_thrust_ratio = float(np.mean(thrust_ratio)) if thrust_ratio.size else 0.0
+        main_power_w = power.hover_power_w * (mean_thrust_ratio ** power.thrust_power_exponent)
+        power_w = power.aux_power_w + main_power_w * load_multiplier
+    return fan_actual_mean, thrust_actual, float(power_w), float(scale)
 
 
 def clip_force_xy(fx: float, fy: float, fxy_max_n: float) -> tuple[float, float]:
@@ -292,34 +348,16 @@ def pair_segments_to_fans(values) -> list[float]:
     arr = np.asarray(values, dtype=float)
     if arr.size == 0:
         return []
-    if arr.size % 2 != 0:
-        return [float(v) for v in arr]
-    return [float(0.5 * (arr[2 * j] + arr[2 * j + 1])) for j in range(arr.size // 2)]
+    topology = default_ring_topology(int(arr.size))
+    return topology.segment_values_to_fan_means(arr)
 
 
 def fan_means_to_segments(fan_mean_n, segment_targets_n) -> np.ndarray:
-    fan_mean = np.asarray(fan_mean_n, dtype=float)
     targets = np.asarray(segment_targets_n, dtype=float)
     if targets.size == 0:
         return targets.copy()
-    if targets.size % 2 != 0:
-        return np.clip(targets, 0.0, None)
-
-    out = np.zeros_like(targets)
-    pair_count = min(targets.size // 2, fan_mean.size)
-    for fan_idx in range(pair_count):
-        s0 = 2 * fan_idx
-        s1 = s0 + 1
-        pair_targets = np.clip(targets[s0:s1 + 1], 0.0, None)
-        pair_sum = float(np.sum(pair_targets))
-        pair_total = max(0.0, 2.0 * float(fan_mean[fan_idx]))
-        if pair_sum <= 1e-9:
-            out[s0:s1 + 1] = 0.5 * pair_total
-        else:
-            out[s0:s1 + 1] = pair_total * pair_targets / pair_sum
-    if 2 * pair_count < targets.size:
-        out[2 * pair_count:] = np.clip(targets[2 * pair_count:], 0.0, None)
-    return out
+    topology = default_ring_topology(int(targets.size))
+    return topology.distribute_fan_means_to_segments(fan_mean_n, targets)
 
 
 def temperature_to_thermal_scale(temp_c, power: PowerSystemParams) -> np.ndarray:
@@ -332,7 +370,7 @@ def temperature_to_thermal_scale(temp_c, power: PowerSystemParams) -> np.ndarray
 
 
 def init_hover_power_state(power: PowerSystemParams, geom: RingGeometry, sim: SimParams) -> PowerSystemState:
-    fan_count = max(1, geom.n_segments // 2)
+    fan_count = default_ring_topology(geom.n_segments).fan_count
     hover_seg_n = sim.mass_kg * sim.gravity / max(1, geom.n_segments)
     hover_power_w = power.hover_power_w + power.aux_power_w
     return PowerSystemState(
@@ -342,6 +380,7 @@ def init_hover_power_state(power: PowerSystemParams, geom: RingGeometry, sim: Si
         power_w=hover_power_w,
         energy_used_wh=0.0,
         thrust_scale=1.0,
+        burst_reserve_j=burst_capacity_j(power),
         fan_mean_n=np.full(fan_count, hover_seg_n, dtype=float),
         fan_temp_c=np.full(fan_count, power.ambient_temp_c, dtype=float),
         thermal_scale=np.ones(fan_count, dtype=float),
@@ -366,18 +405,17 @@ def fault_motion_guard(geom: RingGeometry, fault: FaultSpec | None) -> dict[str,
             'fault_response_scale': 1.0,
             'fault_available_scale': 1.0,
             'fault_asymmetry': 0.0,
+            'dead_align_scale': 1.0,
+            'dead_cross_scale': 1.0,
+            'dead_align_speed_floor_mps': 0.55,
+            'plenum_power_trim': 1.0,
+            'plenum_revector_trim': 1.0,
+            'plenum_align_speed_floor_mps': 0.0,
+            'plenum_brake_trim': 1.0,
         }
 
-    scale = np.ones(geom.n_segments, dtype=float)
-    if fault.dead_fan_group is not None:
-        g = int(fault.dead_fan_group)
-        for idx in (2 * g, 2 * g + 1):
-            if 0 <= idx < geom.n_segments:
-                scale[idx] *= float(fault.dead_fan_scale)
-    if fault.plenum_sector_idx is not None:
-        idx = int(fault.plenum_sector_idx)
-        if 0 <= idx < geom.n_segments:
-            scale[idx] *= float(fault.plenum_sector_scale)
+    topology = default_ring_topology(geom.n_segments)
+    scale = topology.segment_effectiveness_scales(fault)
 
     theta = segment_angles_rad(geom.n_segments)
     available_scale = float(np.clip(np.mean(scale), 0.0, 1.0))
@@ -388,14 +426,32 @@ def fault_motion_guard(geom: RingGeometry, fault: FaultSpec | None) -> dict[str,
         asymmetry = 1.0
 
     dead_guard = 1.0
+    dead_align_scale = 1.0
+    dead_cross_scale = 1.0
+    dead_align_speed_floor_mps = 0.55
     if fault.dead_fan_group is not None:
-        idxs = [idx for idx in (2 * int(fault.dead_fan_group), 2 * int(fault.dead_fan_group) + 1) if 0 <= idx < geom.n_segments]
+        idxs = list(topology.fan_segments(int(fault.dead_fan_group)))
         local_scale = float(np.mean(scale[idxs])) if idxs else 1.0
+        lost_scale = float(np.clip(1.0 - local_scale, 0.0, 1.0))
         dead_guard = 0.60 + 0.40 * local_scale
+        dead_align_scale = 1.0 + 0.45 * lost_scale
+        dead_cross_scale = 1.0 - 0.24 * lost_scale
+        dead_align_speed_floor_mps = 0.55 + 0.22 * lost_scale
 
     plenum_guard = 1.0
-    if fault.plenum_sector_idx is not None and 0 <= int(fault.plenum_sector_idx) < geom.n_segments:
-        plenum_guard = 0.82 + 0.18 * float(scale[int(fault.plenum_sector_idx)])
+    plenum_power_trim = 1.0
+    plenum_revector_trim = 1.0
+    plenum_align_speed_floor_mps = 0.0
+    plenum_brake_trim = 1.0
+    if fault.plenum_sector_idx is not None:
+        idxs = list(topology.plenum_segments(int(fault.plenum_sector_idx)))
+        local_scale = float(np.mean(scale[idxs])) if idxs else 1.0
+        lost_scale = float(np.clip(1.0 - local_scale, 0.0, 1.0))
+        plenum_guard = 0.82 + 0.18 * local_scale
+        plenum_power_trim = 1.0 - 0.40 * lost_scale
+        plenum_revector_trim = 1.0 - 0.22 * lost_scale
+        plenum_align_speed_floor_mps = 0.48 + 0.18 * lost_scale
+        plenum_brake_trim = 1.0 - 0.18 * lost_scale
 
     stuck_guard = 1.0
     if fault.stuck_flap_idx is not None:
@@ -410,6 +466,13 @@ def fault_motion_guard(geom: RingGeometry, fault: FaultSpec | None) -> dict[str,
         'fault_response_scale': float(np.clip(response_guard, 0.40, 1.0)),
         'fault_available_scale': float(available_scale),
         'fault_asymmetry': float(np.clip(asymmetry, 0.0, 1.0)),
+        'dead_align_scale': float(np.clip(dead_align_scale, 1.0, 1.5)),
+        'dead_cross_scale': float(np.clip(dead_cross_scale, 0.70, 1.0)),
+        'dead_align_speed_floor_mps': float(np.clip(dead_align_speed_floor_mps, 0.55, 0.85)),
+        'plenum_power_trim': float(np.clip(plenum_power_trim, 0.84, 1.0)),
+        'plenum_revector_trim': float(np.clip(plenum_revector_trim, 0.88, 1.0)),
+        'plenum_align_speed_floor_mps': float(np.clip(plenum_align_speed_floor_mps, 0.0, 0.65)),
+        'plenum_brake_trim': float(np.clip(plenum_brake_trim, 0.88, 1.0)),
     }
 
 
@@ -420,9 +483,14 @@ def guidance_force_budget(power_state: PowerSystemState, state: AllocatorState, 
     flap_guard = float(np.clip(flap_guard, 0.42, 1.0))
 
     if power.continuous_power_w > 1e-6:
-        continuous_ratio = float(power_state.power_w) / power.continuous_power_w
+        continuous_ratio_raw = float(power_state.power_w) / power.continuous_power_w
     else:
-        continuous_ratio = 0.0
+        continuous_ratio_raw = 0.0
+    burst_capacity = burst_capacity_j(power)
+    burst_reserve_j = float(getattr(power_state, 'burst_reserve_j', burst_capacity))
+    burst_reserve_j = float(np.clip(burst_reserve_j, 0.0, burst_capacity)) if burst_capacity > 0.0 else 0.0
+    burst_reserve_frac = burst_reserve_j / burst_capacity if burst_capacity > 1e-9 else 1.0
+    continuous_ratio = sustained_power_ratio(power, float(power_state.power_w), burst_reserve_j)
     power_guard = 1.0 - 0.62 * smoothstep01((continuous_ratio - 0.80) / 0.18)
     power_guard = float(np.clip(power_guard, 0.40, 1.0))
 
@@ -443,7 +511,16 @@ def guidance_force_budget(power_state: PowerSystemState, state: AllocatorState, 
         'fault_response_scale': float(fault_guard['fault_response_scale']),
         'fault_available_scale': float(fault_guard['fault_available_scale']),
         'fault_asymmetry_pct': float(100.0 * fault_guard['fault_asymmetry']),
+        'dead_align_scale': float(fault_guard['dead_align_scale']),
+        'dead_cross_scale': float(fault_guard['dead_cross_scale']),
+        'dead_align_speed_floor_mps': float(fault_guard['dead_align_speed_floor_mps']),
+        'plenum_power_trim': float(fault_guard['plenum_power_trim']),
+        'plenum_revector_trim': float(fault_guard['plenum_revector_trim']),
+        'plenum_align_speed_floor_mps': float(fault_guard['plenum_align_speed_floor_mps']),
+        'plenum_brake_trim': float(fault_guard['plenum_brake_trim']),
         'continuous_power_ratio': float(continuous_ratio),
+        'continuous_power_raw_ratio': float(continuous_ratio_raw),
+        'burst_reserve_ratio': float(burst_reserve_frac),
         'flap_usage_ratio': float(flap_use),
     }
 
@@ -469,7 +546,7 @@ def apply_power_system(
     hover_per_seg_n = max(1e-6, sim.mass_kg * sim.gravity / max(1, geom.n_segments))
     alpha_limit_rad = max(1e-6, math.radians(geom.alpha_max_deg))
     tangential_scale_n = max(1e-6, 0.35 * hover_per_seg_n)
-    fan_count = max(1, geom.n_segments // 2)
+    fan_count = default_ring_topology(geom.n_segments).fan_count
 
     flap_activity = float(np.mean(np.abs(alpha_actual)) / alpha_limit_rad) if alpha_actual.size else 0.0
     flap_tracking = float(np.mean(np.abs(alpha_cmd - alpha_actual)) / alpha_limit_rad) if alpha_actual.size else 0.0
@@ -481,8 +558,9 @@ def apply_power_system(
         + power.tangential_power_scale * tangential_activity
     )
 
-    fan_cmd_mean = np.asarray(pair_segments_to_fans(thrust_cmd), dtype=float)
-    fan_pre_power_mean = np.asarray(pair_segments_to_fans(thrust_pre_power), dtype=float)
+    topology = default_ring_topology(geom.n_segments)
+    fan_cmd_mean = np.asarray(topology.segment_values_to_fan_means(thrust_cmd), dtype=float)
+    fan_pre_power_mean = np.asarray(topology.segment_values_to_fan_means(thrust_pre_power), dtype=float)
     if fan_cmd_mean.size != fan_count:
         fan_cmd_mean = np.resize(fan_cmd_mean, fan_count)
     if fan_pre_power_mean.size != fan_count:
@@ -508,25 +586,58 @@ def apply_power_system(
     spool_k = 1.0 if power.fan_spool_tau_s <= 1e-6 else min(1.0, dt_s / power.fan_spool_tau_s)
     fan_actual_mean = prev_fan_mean + (fan_target_mean - prev_fan_mean) * spool_k
 
-    thrust_actual = fan_means_to_segments(fan_actual_mean, thrust_pre_power)
-    thrust_ratio = np.clip(thrust_actual / hover_per_seg_n, 0.0, None)
-    mean_thrust_ratio = float(np.mean(thrust_ratio)) if thrust_ratio.size else 0.0
-    main_power_w = power.hover_power_w * (mean_thrust_ratio ** power.thrust_power_exponent)
-    power_w = power.aux_power_w + main_power_w * load_multiplier
+    burst_capacity = burst_capacity_j(power)
+    burst_reserve_j = float(getattr(power_state, 'burst_reserve_j', burst_capacity))
+    burst_reserve_j = float(np.clip(burst_reserve_j, 0.0, burst_capacity)) if burst_capacity > 0.0 else 0.0
 
-    if power_w > power.peak_power_w:
-        peak_budget_w = max(1e-6, power.peak_power_w - power.aux_power_w)
-        main_load_w = max(1e-6, power_w - power.aux_power_w)
-        peak_scale = (peak_budget_w / main_load_w) ** (1.0 / max(power.thrust_power_exponent, 1e-6))
-        fan_actual_mean *= max(power.min_supply_scale, min(1.0, peak_scale))
-        thrust_actual = fan_means_to_segments(fan_actual_mean, thrust_pre_power)
-        thrust_ratio = np.clip(thrust_actual / hover_per_seg_n, 0.0, None)
-        mean_thrust_ratio = float(np.mean(thrust_ratio)) if thrust_ratio.size else 0.0
-        main_power_w = power.hover_power_w * (mean_thrust_ratio ** power.thrust_power_exponent)
-        power_w = power.aux_power_w + main_power_w * load_multiplier
+    fan_actual_mean, thrust_actual, power_w, peak_clip_scale = clip_main_power_to_budget(
+        fan_actual_mean,
+        thrust_pre_power,
+        load_multiplier,
+        power.peak_power_w,
+        power,
+        topology,
+        hover_per_seg_n,
+    )
+    continuous_limit_w = max(power.continuous_power_w, 1e-6)
+    continuous_power_raw_pct = 100.0 * power_w / continuous_limit_w
+    burst_clip_pct = 0.0
+    burst_active_time_s = 0.0
+    if power_w > power.continuous_power_w and dt_s > 0.0:
+        burst_active_time_s = float(dt_s)
+        burst_needed_j = (power_w - power.continuous_power_w) * dt_s
+        if burst_capacity <= 1e-9:
+            allowed_power_w = power.continuous_power_w
+        else:
+            available_burst_j = max(0.0, burst_reserve_j)
+            if burst_needed_j <= available_burst_j + 1e-9:
+                burst_reserve_j = max(0.0, available_burst_j - burst_needed_j)
+                allowed_power_w = power_w
+            else:
+                allowed_power_w = power.continuous_power_w + available_burst_j / dt_s
+                burst_reserve_j = 0.0
+        if allowed_power_w + 1e-9 < power_w:
+            burst_clip_pct = 100.0 * max(0.0, power_w - allowed_power_w) / max(power_w, 1e-6)
+            fan_actual_mean, thrust_actual, power_w, _burst_scale = clip_main_power_to_budget(
+                fan_actual_mean,
+                thrust_pre_power,
+                load_multiplier,
+                min(power.peak_power_w, allowed_power_w),
+                power,
+                topology,
+                hover_per_seg_n,
+            )
+    elif burst_capacity > 1e-9 and power.burst_recharge_tau_s > 1e-6 and power_w < power.continuous_power_w:
+        headroom_j = (power.continuous_power_w - power_w) * dt_s
+        recharge_cap_j = burst_capacity - burst_reserve_j
+        recharge_tau_j = burst_capacity * dt_s / power.burst_recharge_tau_s
+        burst_reserve_j += min(recharge_cap_j, headroom_j, recharge_tau_j)
+
+    burst_reserve_j = float(np.clip(burst_reserve_j, 0.0, burst_capacity)) if burst_capacity > 0.0 else 0.0
+    sustained_power_pct = 100.0 * sustained_power_ratio(power, power_w, burst_reserve_j)
+    burst_reserve_pct = 100.0 * burst_reserve_j / burst_capacity if burst_capacity > 1e-9 else 100.0
 
     fan_power_share_w = max(0.0, power_w - power.aux_power_w) / max(1, fan_count)
-    continuous_power_pct = 100.0 * power_w / max(power.continuous_power_w, 1e-6)
     overload_ratio = max(0.0, power_w / max(power.continuous_power_w, 1e-6) - 1.0)
     heating_w = fan_power_share_w * (power.fan_heat_fraction + power.overload_heat_gain * overload_ratio)
     cooling_w = power.fan_cooling_w_per_c * np.maximum(prev_fan_temp - power.ambient_temp_c, 0.0)
@@ -556,7 +667,12 @@ def apply_power_system(
         "power_w": float(power_w),
         "energy_wh": float(energy_used_wh),
         "thrust_scale_pct": float(100.0 * min(supply_scale_next, float(np.mean(thermal_scale_next)))) ,
-        "continuous_power_pct": float(continuous_power_pct),
+        "continuous_power_pct": float(sustained_power_pct),
+        "continuous_power_raw_pct": float(continuous_power_raw_pct),
+        "sustained_power_pct": float(sustained_power_pct),
+        "burst_reserve_pct": float(burst_reserve_pct),
+        "burst_clip_pct": float(burst_clip_pct),
+        "burst_active_time_s": float(burst_active_time_s),
         "power_margin_kw": float((power.continuous_power_w - power_w) / 1000.0),
         "thermal_scale_pct": float(100.0 * np.mean(thermal_scale_next)),
         "fan_temp_max_c": float(np.max(fan_temp_next)) if fan_temp_next.size else float(power.ambient_temp_c),
@@ -576,6 +692,7 @@ def apply_power_system(
         power_w=float(power_w),
         energy_used_wh=float(energy_used_wh),
         thrust_scale=float(min(supply_scale_next, float(np.mean(thermal_scale_next)))),
+        burst_reserve_j=float(burst_reserve_j),
         fan_mean_n=np.asarray(fan_actual_mean, dtype=float),
         fan_temp_c=np.asarray(fan_temp_next, dtype=float),
         thermal_scale=np.asarray(thermal_scale_next, dtype=float),
@@ -605,6 +722,11 @@ def append_engineering_telemetry(hist: dict, telemetry: dict, fx_cmd: float, fy_
         "energy_wh",
         "thrust_scale_pct",
         "continuous_power_pct",
+        "continuous_power_raw_pct",
+        "sustained_power_pct",
+        "burst_reserve_pct",
+        "burst_clip_pct",
+        "burst_active_time_s",
         "power_margin_kw",
         "thermal_scale_pct",
         "fan_temp_max_c",
@@ -854,7 +976,12 @@ def run_step_snap_v3(
         "t": [], "x": [], "y": [], "z": [], "vx": [], "vy": [], "vz": [], "speed": [],
         "yaw_deg": [], "yaw_rate_deg_s": [], "mz_est": [], "alpha_deg_rms": [], "ft_tan_rms": [],
         "alpha_deg_32": [], "ft_tan_32": [], "fan_thrust_16": [],
-        "cmd_phase": [], "cmd_dir_deg": [], "fx_cmd": [], "fy_cmd": []
+        "cmd_phase": [], "cmd_dir_deg": [], "fx_cmd": [], "fy_cmd": [],
+        "guard_scale": [], "flap_guard_scale": [], "power_guard_scale": [],
+        "thermal_guard_scale": [], "supply_guard_scale": [], "fault_guard_scale": [],
+        "fault_response_scale": [], "fault_available_scale": [], "fault_asymmetry_pct": [],
+        "fxy_budget_n": [], "budget_ratio": [], "speed_guard_scale": [], "gain_guard_scale": [],
+        "continuous_power_ratio": [], "flap_usage_ratio": []
     }
 
     # helpers
@@ -884,19 +1011,91 @@ def run_step_snap_v3(
     else:
         hold_frac = float(np.clip(redirect_hold_frac, 0.0, 0.95))
     steer_scale = float(np.clip(redirect_steer_scale, 0.0, 1.5))
-    phase_c_ramp_steps = max(1, int((0.75 + 0.95 * turn_ratio + 0.35 * hold_frac) / sim.dt_s))
+    fault_profile = fault_motion_guard(geom, fault)
+    phase_c_ramp_steps = max(
+        1,
+        int((0.75 + 0.95 * turn_ratio + 0.35 * hold_frac) / max(1e-6, fault_profile['dead_align_scale']) / sim.dt_s),
+    )
     step_speed_ref = 0.0
+    command_rate_n_s = 9000.0
+    command_fx_prev = 0.0
+    command_fy_prev = 0.0
+    snap_power_ratio_filt = 1.0
 
     for k in range(steps):
         t = k * sim.dt_s
+        fxy_budget_n, guard = guidance_force_budget(power_state, state, geom, power, fxy_n, fault=fault)
+        budget_ratio = float(guard["budget_ratio"])
+        speed_guard_scale = 0.38 + 0.62 * smoothstep_local((budget_ratio - 0.25) / 0.75)
+        gain_guard_scale = 0.30 + 0.70 * smoothstep_local((budget_ratio - 0.25) / 0.75)
+        power_pressure = smoothstep_local((guard["continuous_power_ratio"] - 0.88) / 0.12)
+        power_guard_scale = float(guard["power_guard_scale"])
+        snap_power_ratio_filt = 0.92 * snap_power_ratio_filt + 0.08 * float(guard["continuous_power_ratio"])
+        power_priority_scale = 1.0 - 0.32 * smoothstep_local((snap_power_ratio_filt - 0.94) / 0.08)
+        power_priority_scale = float(np.clip(power_priority_scale, 0.66, 1.0))
+        dead_align_scale = float(guard["dead_align_scale"])
+        dead_cross_scale = float(guard["dead_cross_scale"])
+        dead_align_speed_floor_mps = float(guard["dead_align_speed_floor_mps"])
+        plenum_power_trim = float(guard["plenum_power_trim"])
+        plenum_revector_trim = float(guard["plenum_revector_trim"])
+        plenum_align_speed_floor_mps = float(guard["plenum_align_speed_floor_mps"])
+        plenum_brake_trim = float(guard["plenum_brake_trim"])
+        speed_guard_scale *= 1.0 - 0.18 * power_pressure
+        gain_guard_scale *= 1.0 - 0.24 * power_pressure
+        speed_guard_scale *= 0.78 + 0.22 * power_guard_scale
+        gain_guard_scale *= 0.70 + 0.30 * power_guard_scale
+        speed_guard_scale *= 0.72 + 0.28 * power_priority_scale
+        gain_guard_scale *= 0.62 + 0.38 * power_priority_scale
+        speed_guard_scale *= float(guard["fault_guard_scale"])
+        gain_guard_scale *= float(guard["fault_guard_scale"])
+        speed_guard_scale *= plenum_power_trim
+        gain_guard_scale *= plenum_power_trim
+        fxy_budget_n *= 0.82 + 0.18 * power_guard_scale
+        fxy_budget_n *= 0.70 + 0.30 * power_priority_scale
+        fxy_budget_n *= plenum_power_trim
 
-        # Decide phase
+        maneuver_state = EstimatedVehicleState(
+            x_m=st.x_m,
+            y_m=st.y_m,
+            z_m=st.z_m,
+            vx_mps=st.vx_mps,
+            vy_mps=st.vy_mps,
+            vz_mps=st.vz_mps,
+            yaw_deg=st.yaw_deg,
+            yaw_rate_deg_s=st.yaw_rate_deg_s,
+            battery_soc_pct=100.0 * power_state.soc_frac,
+            bus_voltage_v=power_state.voltage_v,
+            continuous_power_ratio=float(guard["continuous_power_ratio"]),
+            thermal_scale_pct=100.0 * float(guard["thermal_guard_scale"]),
+            fault_available_scale=float(guard["fault_available_scale"]),
+            fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
+        )
+        maneuver_health = ActuatorHealthState(
+            lateral_budget_n=fxy_budget_n,
+            guard_scale=float(guard["guard_scale"]),
+            response_scale=float(guard["fault_response_scale"]),
+            continuous_power_ratio=float(guard["continuous_power_ratio"]),
+            thermal_scale_pct=100.0 * float(guard["thermal_guard_scale"]),
+            supply_scale_pct=100.0 * float(guard["supply_guard_scale"]),
+            fault_available_scale=float(guard["fault_available_scale"]),
+            fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
+        )
+
         if k < step_idx:
             phase = "A"
             dir_deg = dir_deg_a
-            phi = math.radians(dir_deg)
-            fx_cmd = fxy_n * math.cos(phi)
-            fy_cmd = fxy_n * math.sin(phi)
+            phase_control = command_directional_force(
+                math.cos(math.radians(dir_deg_a)),
+                math.sin(math.radians(dir_deg_a)),
+                maneuver_health,
+                fxy_command_n=fxy_n,
+                force_scale=gain_guard_scale,
+                fz_n=fz_cmd,
+                mz_nm=mz_nm,
+                source="maneuver-controller.step-snap-cruise",
+            )
+            fx_raw = phase_control.desired_wrench.fx_n
+            fy_raw = phase_control.desired_wrench.fy_n
 
         elif k < snap_end_idx:
             phase = "B"
@@ -905,14 +1104,32 @@ def run_step_snap_v3(
             progress = (k - step_idx) / max(1, snap_end_idx - step_idx - 1)
             steer_progress = smoothstep_local((progress - hold_frac) / max(1e-6, 1.0 - hold_frac))
             steer_mix = float(np.clip(0.35 * steer_progress * steer_scale, 0.0, 0.45))
-            brake_ux, brake_uy = unit_or_default(-st.vx_mps, -st.vy_mps, nominal_brake_unit)
-            cmd_x = (1.0 - steer_mix) * brake_ux + steer_mix * target_unit[0]
-            cmd_y = (1.0 - steer_mix) * brake_uy + steer_mix * target_unit[1]
-            cmd_ux, cmd_uy = unit_or_default(cmd_x, cmd_y, nominal_brake_unit)
-            mag = fxy_n * brake_gain * (1.0 - 0.20 * steer_mix)
-            fx_cmd = mag * cmd_ux
-            fy_cmd = mag * cmd_uy
-            dir_deg = (math.degrees(math.atan2(cmd_uy, cmd_ux)) + 360.0) % 360.0
+            phase_control = track_step_snap_brake(
+                maneuver_state,
+                target_ux=target_unit[0],
+                target_uy=target_unit[1],
+                nominal_brake_ux=nominal_brake_unit[0],
+                nominal_brake_uy=nominal_brake_unit[1],
+                steer_mix=steer_mix,
+                health=ActuatorHealthState(
+                    lateral_budget_n=fxy_budget_n * brake_gain,
+                    guard_scale=maneuver_health.guard_scale,
+                    response_scale=maneuver_health.response_scale,
+                    continuous_power_ratio=maneuver_health.continuous_power_ratio,
+                    thermal_scale_pct=maneuver_health.thermal_scale_pct,
+                    supply_scale_pct=maneuver_health.supply_scale_pct,
+                    fault_available_scale=maneuver_health.fault_available_scale,
+                    fault_asymmetry_pct=maneuver_health.fault_asymmetry_pct,
+                ),
+                fxy_command_n=fxy_n,
+                brake_gain=brake_gain * gain_guard_scale * power_priority_scale * plenum_revector_trim * plenum_brake_trim * (1.0 - 0.20 * steer_mix),
+                fz_n=fz_cmd,
+                mz_nm=mz_nm,
+                source="maneuver-controller.step-snap-brake",
+            )
+            fx_raw = phase_control.desired_wrench.fx_n
+            fy_raw = phase_control.desired_wrench.fy_n
+            dir_deg = (math.degrees(math.atan2(phase_control.command_uy, phase_control.command_ux)) + 360.0) % 360.0
 
         else:
             phase = "C"
@@ -920,23 +1137,45 @@ def run_step_snap_v3(
                 step_speed_ref = max(speed_stop_thr_mps, float(math.hypot(st.vx_mps, st.vy_mps)))
             dir_deg = dir_deg_b
             phase_c_progress = smoothstep_local((k - snap_end_idx) / phase_c_ramp_steps)
-            cross_unit = (-target_unit[1], target_unit[0])
-            along_speed = st.vx_mps * target_unit[0] + st.vy_mps * target_unit[1]
-            cross_speed = st.vx_mps * cross_unit[0] + st.vy_mps * cross_unit[1]
-            speed_ref = max(1.0, step_speed_ref)
-            desired_along_speed = step_speed_ref * phase_c_progress
-            along_cmd = np.clip((desired_along_speed - along_speed) / speed_ref, -0.55, 1.0)
-            cross_cmd = np.clip((-cross_speed) / speed_ref, -1.0, 1.0)
-            cross_gain = 0.75 + 0.45 * turn_ratio
-            raw_x = along_cmd * target_unit[0] + cross_gain * cross_cmd * cross_unit[0]
-            raw_y = along_cmd * target_unit[1] + cross_gain * cross_cmd * cross_unit[1]
-            raw_mag = float(math.hypot(raw_x, raw_y))
-            if raw_mag > 1.0:
-                raw_x /= raw_mag
-                raw_y /= raw_mag
-            phase_c_scale = 0.40 + 0.60 * phase_c_progress
-            fx_cmd = fxy_n * phase_c_scale * raw_x
-            fy_cmd = fxy_n * phase_c_scale * raw_y
+            desired_along_speed = step_speed_ref * phase_c_progress * speed_guard_scale
+            if dead_align_scale > 1.0:
+                align_capture = smoothstep_local((phase_c_progress - 0.18) / 0.42)
+                desired_along_speed = max(
+                    desired_along_speed,
+                    dead_align_speed_floor_mps * align_capture,
+                )
+            if plenum_align_speed_floor_mps > 1e-6:
+                plenum_align_capture = smoothstep_local((phase_c_progress - 0.24) / 0.34)
+                desired_along_speed = max(
+                    desired_along_speed,
+                    plenum_align_speed_floor_mps * plenum_align_capture,
+                )
+            cross_gain = (0.75 + 0.45 * turn_ratio) * dead_cross_scale * plenum_revector_trim
+            reverse_force_scale = (0.40 + 0.60 * phase_c_progress) * gain_guard_scale * power_priority_scale * plenum_revector_trim
+            if dead_align_scale > 1.0:
+                reverse_force_scale *= 0.90 + 0.10 * dead_align_scale
+            phase_control = track_step_snap_reverse(
+                maneuver_state,
+                target_ux=target_unit[0],
+                target_uy=target_unit[1],
+                reference_speed_mps=step_speed_ref,
+                desired_along_speed_mps=desired_along_speed,
+                cross_gain=cross_gain,
+                health=maneuver_health,
+                fxy_command_n=fxy_n,
+                force_scale=reverse_force_scale,
+                fz_n=fz_cmd,
+                mz_nm=mz_nm,
+                source="maneuver-controller.step-snap-reverse",
+            )
+            fx_raw = phase_control.desired_wrench.fx_n
+            fy_raw = phase_control.desired_wrench.fy_n
+
+        fx_raw, fy_raw = clip_force_xy(fx_raw, fy_raw, fxy_budget_n)
+        command_rate_active_n_s = command_rate_n_s * (0.50 + 0.50 * min(speed_guard_scale, gain_guard_scale))
+        command_rate_active_n_s *= float(guard["fault_response_scale"])
+        fx_cmd, fy_cmd = rate_limit_xy_force(command_fx_prev, command_fy_prev, fx_raw, fy_raw, command_rate_active_n_s, sim.dt_s)
+        command_fx_prev, command_fy_prev = fx_cmd, fy_cmd
 
         alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault)
         alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
@@ -992,6 +1231,21 @@ def run_step_snap_v3(
         hist["cmd_phase"].append(phase)
         hist["cmd_dir_deg"].append(dir_deg if isinstance(dir_deg, float) else float(dir_deg))
         hist["fx_cmd"].append(float(fx_cmd)); hist["fy_cmd"].append(float(fy_cmd))
+        hist["guard_scale"].append(float(guard["guard_scale"]))
+        hist["flap_guard_scale"].append(float(guard["flap_guard_scale"]))
+        hist["power_guard_scale"].append(float(guard["power_guard_scale"]))
+        hist["thermal_guard_scale"].append(float(guard["thermal_guard_scale"]))
+        hist["supply_guard_scale"].append(float(guard["supply_guard_scale"]))
+        hist["fault_guard_scale"].append(float(guard["fault_guard_scale"]))
+        hist["fault_response_scale"].append(float(guard["fault_response_scale"]))
+        hist["fault_available_scale"].append(float(guard["fault_available_scale"]))
+        hist["fault_asymmetry_pct"].append(float(guard["fault_asymmetry_pct"]))
+        hist["fxy_budget_n"].append(float(fxy_budget_n))
+        hist["budget_ratio"].append(float(guard["budget_ratio"]))
+        hist["speed_guard_scale"].append(float(speed_guard_scale))
+        hist["gain_guard_scale"].append(float(gain_guard_scale))
+        hist["continuous_power_ratio"].append(float(guard["continuous_power_ratio"]))
+        hist["flap_usage_ratio"].append(float(guard["flap_usage_ratio"]))
         append_engineering_telemetry(hist, telemetry, fx_cmd, fy_cmd, fz_cmd, net)
 
     # ----- Gate metrics -----
@@ -1071,6 +1325,8 @@ def run_step_snap_v3(
             "hold_frac": hold_frac,
             "steer_scale": steer_scale,
             "turn_separation_deg": redirect_sep_deg,
+            "command_rate_n_s": command_rate_n_s,
+            "guard_mode": "budget-aware-step-snap",
         },
         "step_metrics": {
             "speed_at_step_mps": speed_at_step,
@@ -1222,26 +1478,9 @@ def run_step_redirect_v3(
             desired_dir_x = (1.0 - progress) * start_unit[0] + progress * target_unit[0]
             desired_dir_y = (1.0 - progress) * start_unit[1] + progress * target_unit[1]
             desired_ux, desired_uy = unit_or_default(desired_dir_x, desired_dir_y, target_unit)
-            cross_unit = (-desired_uy, desired_ux)
-
-            along_speed = st.vx_mps * desired_ux + st.vy_mps * desired_uy
-            cross_speed = st.vx_mps * cross_unit[0] + st.vy_mps * cross_unit[1]
-            speed_ref = max(1.0, step_speed_ref)
 
             desired_speed = step_speed_ref * (redirect_speed_scale + (1.0 - redirect_speed_scale) * progress)
             desired_speed *= speed_guard_scale
-            along_cmd = np.clip((desired_speed - along_speed) / speed_ref, -0.45, 0.90)
-            cross_cmd = np.clip((-cross_speed) / speed_ref, -1.0, 1.0)
-
-            raw_x = along_cmd * desired_ux + redirect_cross_gain * cross_cmd * cross_unit[0]
-            raw_y = along_cmd * desired_uy + redirect_cross_gain * cross_cmd * cross_unit[1]
-            raw_mag = float(math.hypot(raw_x, raw_y))
-            if raw_mag < 1e-6:
-                raw_x, raw_y = desired_ux, desired_uy
-                raw_mag = 1.0
-            if raw_mag > 1.0:
-                raw_x /= raw_mag
-                raw_y /= raw_mag
 
             if phase == "R":
                 phase_scale = (0.50 + 0.40 * progress) * (1.0 - 0.12 * turn_ratio * (1.0 - progress))
@@ -1250,9 +1489,53 @@ def run_step_redirect_v3(
                 phase_scale = 0.78 + 0.22 * settle_progress
 
             phase_scale *= gain_guard_scale
-            fx_raw = fxy_n * phase_scale * raw_x
-            fy_raw = fxy_n * phase_scale * raw_y
-            dir_deg = (math.degrees(math.atan2(raw_y, raw_x)) + 360.0) % 360.0
+            maneuver_health = ActuatorHealthState(
+                lateral_budget_n=fxy_budget_n,
+                guard_scale=float(guard["guard_scale"]),
+                response_scale=float(guard["fault_response_scale"]),
+                continuous_power_ratio=float(guard["continuous_power_ratio"]),
+                thermal_scale_pct=100.0 * float(guard["thermal_guard_scale"]),
+                supply_scale_pct=100.0 * float(guard["supply_guard_scale"]),
+                fault_available_scale=float(guard["fault_available_scale"]),
+                fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
+            )
+            maneuver_state = EstimatedVehicleState(
+                x_m=st.x_m,
+                y_m=st.y_m,
+                z_m=st.z_m,
+                vx_mps=st.vx_mps,
+                vy_mps=st.vy_mps,
+                vz_mps=st.vz_mps,
+                yaw_deg=st.yaw_deg,
+                yaw_rate_deg_s=st.yaw_rate_deg_s,
+                battery_soc_pct=100.0 * power_state.soc_frac,
+                bus_voltage_v=power_state.voltage_v,
+                continuous_power_ratio=float(guard["continuous_power_ratio"]),
+                thermal_scale_pct=100.0 * float(guard["thermal_guard_scale"]),
+                fault_available_scale=float(guard["fault_available_scale"]),
+                fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
+            )
+            redirect_target = RedirectTarget(
+                desired_ux=desired_ux,
+                desired_uy=desired_uy,
+                desired_speed_mps=desired_speed,
+                reference_speed_mps=step_speed_ref,
+                cross_gain=redirect_cross_gain,
+                hold_yaw_deg=yaw_hold_deg,
+                phase=phase,
+                force_scale=phase_scale,
+            )
+            redirect_control = track_redirect_velocity(
+                maneuver_state,
+                redirect_target,
+                maneuver_health,
+                fxy_command_n=fxy_n,
+                mz_nm=mz_nm,
+                source="maneuver-controller.step-redirect",
+            )
+            fx_raw = redirect_control.desired_wrench.fx_n
+            fy_raw = redirect_control.desired_wrench.fy_n
+            dir_deg = (math.degrees(math.atan2(redirect_control.command_uy, redirect_control.command_ux)) + 360.0) % 360.0
 
         fx_raw, fy_raw = clip_force_xy(fx_raw, fy_raw, fxy_budget_n)
         command_rate_active_n_s = command_rate_n_s * (0.55 + 0.45 * min(speed_guard_scale, gain_guard_scale))
@@ -1457,6 +1740,10 @@ def run_coordinate_mission_v5(
     command_rate_n_s = 9000.0
     command_fx_prev = 0.0
     command_fy_prev = 0.0
+    controller_gains = XYVehicleControllerGains(
+        pos_k_n_per_m=pos_k_n_per_m,
+        vel_k_n_per_mps=vel_k_n_per_mps,
+    )
 
     hist = {
         "t": [], "x": [], "y": [], "z": [], "vx": [], "vy": [], "vz": [], "speed": [],
@@ -1543,18 +1830,57 @@ def run_coordinate_mission_v5(
         desired_vx_mps = desired_speed_mps * goal_ux
         desired_vy_mps = desired_speed_mps * goal_uy
         goal_scale = max(0.45, 1.0 - 0.55 * threat_scale) * gain_guard_scale
-        fx_goal = goal_scale * (pos_k_n_per_m * goal_dx + vel_k_n_per_mps * (desired_vx_mps - st.vx_mps))
-        fy_goal = goal_scale * (pos_k_n_per_m * goal_dy + vel_k_n_per_mps * (desired_vy_mps - st.vy_mps))
         safety_mag_n = float(math.hypot(fx_safety, fy_safety))
         goal_budget_n = max(0.25 * fxy_budget_n, fxy_budget_n - 0.60 * safety_mag_n)
-        raw_goal_mag_n = float(math.hypot(fx_goal, fy_goal))
-        if raw_goal_mag_n > max(goal_budget_n, 1e-6):
-            goal_force_scale = goal_budget_n / raw_goal_mag_n
-        else:
-            goal_force_scale = 1.0
-        goal_force_scale = float(np.clip(goal_force_scale, 0.30, 1.0))
-        fx_goal *= goal_force_scale
-        fy_goal *= goal_force_scale
+        estimated_state = EstimatedVehicleState(
+            x_m=st.x_m,
+            y_m=st.y_m,
+            z_m=st.z_m,
+            vx_mps=st.vx_mps,
+            vy_mps=st.vy_mps,
+            vz_mps=st.vz_mps,
+            yaw_deg=st.yaw_deg,
+            yaw_rate_deg_s=st.yaw_rate_deg_s,
+            battery_soc_pct=100.0 * power_state.soc_frac,
+            bus_voltage_v=power_state.voltage_v,
+            continuous_power_ratio=float(guard["continuous_power_ratio"]),
+            thermal_scale_pct=100.0 * float(guard["thermal_guard_scale"]),
+            fault_available_scale=float(guard["fault_available_scale"]),
+            fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
+        )
+        guidance_target = GuidanceTarget(
+            goal_x_m=goal_x_m,
+            goal_y_m=goal_y_m,
+            goal_z_m=z_target_m,
+            desired_vx_mps=desired_vx_mps,
+            desired_vy_mps=desired_vy_mps,
+            desired_vz_mps=0.0,
+            hold_yaw_deg=yaw_hold_deg,
+            mode="route-track",
+            force_scale=goal_scale,
+        )
+        actuator_health = ActuatorHealthState(
+            lateral_budget_n=goal_budget_n,
+            guard_scale=float(guard["guard_scale"]),
+            response_scale=float(guard["fault_response_scale"]),
+            continuous_power_ratio=float(guard["continuous_power_ratio"]),
+            thermal_scale_pct=100.0 * float(guard["thermal_guard_scale"]),
+            supply_scale_pct=100.0 * float(guard["supply_guard_scale"]),
+            fault_available_scale=float(guard["fault_available_scale"]),
+            fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
+        )
+        goal_control = track_xy_position(
+            estimated_state,
+            guidance_target,
+            controller_gains,
+            actuator_health,
+            fz_n=fz_cmd,
+            mz_nm=mz_nm,
+            source="coordinate-mission.track-route",
+        )
+        fx_goal = goal_control.desired_wrench.fx_n
+        fy_goal = goal_control.desired_wrench.fy_n
+        goal_force_scale = float(np.clip(goal_control.clip_scale, 0.30, 1.0))
         fx_raw, fy_raw = clip_force_xy(fx_goal + fx_safety, fy_goal + fy_safety, fxy_budget_n)
         command_rate_active_n_s = command_rate_n_s * (0.50 + 0.50 * min(speed_guard_scale, goal_force_scale))
         command_rate_active_n_s *= float(guard["fault_response_scale"])

@@ -397,7 +397,7 @@ def _run_maneuver_profile(
             pl=pl,
             fault=fault,
         )
-    if profile == 'step-snap':
+    if profile in {'step-snap', 'step-snap-eco'}:
         return run_step_snap_v3(
             dir_deg_a=dir_a_deg,
             dir_deg_b=dir_b_deg,
@@ -467,16 +467,27 @@ def _apply_maneuver_aggressiveness(base_kwargs: dict, aggressiveness: float, pro
     turn_ratio = turn_delta / 180.0
     params['fxy_n'] = float(base_kwargs['fxy_n'] * (0.22 + 0.78 * g) * (1.0 - 0.25 * turn_ratio * (1.0 - 0.5 * g)))
     params['total_s'] = float(base_kwargs['total_s'] * (1.0 + (0.55 + 0.55 * turn_ratio) * (1.0 - g)))
-    if profile == 'step-snap':
+    if profile in {'step-snap', 'step-snap-eco'}:
         base_hold_frac = float(base_kwargs.get('redirect_hold_frac', -1.0))
         base_steer_scale = float(base_kwargs.get('redirect_steer_scale', 1.0))
-        params['snap_stop_s'] = float(base_kwargs['snap_stop_s'] * (1.05 + (2.2 + 1.8 * turn_ratio) * (1.0 - g) + 0.35 * turn_ratio))
-        params['brake_gain'] = float(base_kwargs['brake_gain'] * (0.74 + 0.26 * g + 0.08 * turn_ratio))
-        if base_hold_frac < 0.0:
-            params['redirect_hold_frac'] = float(np.clip(0.60 + 0.25 * turn_ratio + 0.18 * (1.0 - g), 0.55, 0.98))
+        if profile == 'step-snap-eco':
+            params['fxy_n'] *= 0.84 + 0.08 * g - 0.08 * turn_ratio * (1.0 - g)
+            params['total_s'] *= 1.08 + 0.36 * turn_ratio * (1.0 - g)
+            params['snap_stop_s'] = float(base_kwargs['snap_stop_s'] * (1.10 + (1.75 + 1.30 * turn_ratio) * (1.0 - g) + 0.20 * turn_ratio))
+            params['brake_gain'] = float(base_kwargs['brake_gain'] * (0.68 + 0.18 * g + 0.05 * turn_ratio))
+            if base_hold_frac < 0.0:
+                params['redirect_hold_frac'] = float(np.clip(0.66 + 0.22 * turn_ratio + 0.16 * (1.0 - g), 0.62, 0.985))
+            else:
+                params['redirect_hold_frac'] = float(np.clip(max(base_hold_frac, 0.66), 0.0, 0.985))
+            params['redirect_steer_scale'] = float(np.clip(base_steer_scale * (0.56 + 0.18 * g) * (1.0 - 0.12 * turn_ratio), 0.12, 1.1))
         else:
-            params['redirect_hold_frac'] = float(np.clip(base_hold_frac, 0.0, 0.98))
-        params['redirect_steer_scale'] = float(np.clip(base_steer_scale * (0.55 + 0.45 * g) * (1.0 - 0.25 * turn_ratio), 0.15, 1.5))
+            params['snap_stop_s'] = float(base_kwargs['snap_stop_s'] * (1.05 + (2.2 + 1.8 * turn_ratio) * (1.0 - g) + 0.35 * turn_ratio))
+            params['brake_gain'] = float(base_kwargs['brake_gain'] * (0.74 + 0.26 * g + 0.08 * turn_ratio))
+            if base_hold_frac < 0.0:
+                params['redirect_hold_frac'] = float(np.clip(0.60 + 0.25 * turn_ratio + 0.18 * (1.0 - g), 0.55, 0.98))
+            else:
+                params['redirect_hold_frac'] = float(np.clip(base_hold_frac, 0.0, 0.98))
+            params['redirect_steer_scale'] = float(np.clip(base_steer_scale * (0.55 + 0.45 * g) * (1.0 - 0.25 * turn_ratio), 0.15, 1.5))
     elif profile in {'step-redirect', 'step-redirect-eco'}:
         base_time = float(base_kwargs.get('redirect_time_s', 1.6))
         base_speed_scale = float(base_kwargs.get('redirect_speed_scale', 0.88))
@@ -514,6 +525,8 @@ def _maneuver_tune_passes(
     vectoring = engineering.get('vectoring', {})
 
     continuous_p95 = _maneuver_scalar(thermal.get('continuous_power_p95_pct'))
+    burst_reserve_min_pct = _maneuver_scalar(thermal.get('burst_reserve_min_pct'))
+    burst_clip_time_s = _maneuver_scalar(thermal.get('burst_clip_time_s'))
     flap_peak = _maneuver_scalar(flaps.get('limit_usage_peak_pct'))
     flap_tracking = _maneuver_scalar(flaps.get('tracking_rms_deg'))
     fan_tracking_pct = _maneuver_scalar(fans.get('tracking_rms_pct_mean_cmd'))
@@ -523,12 +536,16 @@ def _maneuver_tune_passes(
     yaw_hold_error = _maneuver_scalar(maneuver.get('yaw_hold_error_mean_abs_deg'))
     turn_delta = _maneuver_scalar(maneuver.get('turn_delta_deg')) or 0.0
     requires_reversal = (profile == 'step-snap') or turn_delta >= 135.0
+    if burst_reserve_min_pct is not None and burst_clip_time_s is not None:
+        power_ok = burst_clip_time_s <= 0.05 and burst_reserve_min_pct >= 25.0
+    else:
+        power_ok = continuous_p95 is not None and continuous_p95 <= target_continuous_power_p95_pct
 
     return (
         (not requires_reversal or maneuver.get('t_reversal_s') is not None)
         and maneuver.get('t90_dir_s') is not None
         and (profile != 'step-snap' or maneuver.get('t_to_speed_below_thr_s') is not None)
-        and continuous_p95 is not None and continuous_p95 <= target_continuous_power_p95_pct
+        and power_ok
         and flap_peak is not None and flap_peak <= target_flap_peak_pct
         and flap_tracking is not None and flap_tracking <= 2.0
         and fan_tracking_pct is not None and fan_tracking_pct <= target_fan_tracking_pct
@@ -557,6 +574,8 @@ def _maneuver_tune_penalty(
     vectoring = engineering.get('vectoring', {})
 
     continuous_p95 = _maneuver_scalar(thermal.get('continuous_power_p95_pct'))
+    burst_reserve_min_pct = _maneuver_scalar(thermal.get('burst_reserve_min_pct'))
+    burst_clip_time_s = _maneuver_scalar(thermal.get('burst_clip_time_s'))
     flap_peak = _maneuver_scalar(flaps.get('limit_usage_peak_pct'))
     flap_tracking = _maneuver_scalar(flaps.get('tracking_rms_deg'))
     fan_tracking_pct = _maneuver_scalar(fans.get('tracking_rms_pct_mean_cmd'))
@@ -566,6 +585,8 @@ def _maneuver_tune_penalty(
     yaw_hold_error = _maneuver_scalar(maneuver.get('yaw_hold_error_mean_abs_deg'))
     turn_delta = _maneuver_scalar(maneuver.get('turn_delta_deg'))
     continuous_p95 = 1e9 if continuous_p95 is None else continuous_p95
+    burst_reserve_min_pct = -1e9 if burst_reserve_min_pct is None else burst_reserve_min_pct
+    burst_clip_time_s = 1e9 if burst_clip_time_s is None else burst_clip_time_s
     flap_peak = 1e9 if flap_peak is None else flap_peak
     flap_tracking = 1e9 if flap_tracking is None else flap_tracking
     fan_tracking_pct = 1e9 if fan_tracking_pct is None else fan_tracking_pct
@@ -582,7 +603,9 @@ def _maneuver_tune_penalty(
         penalty += 4000.0
     if profile == 'step-snap' and maneuver.get('t_to_speed_below_thr_s') is None:
         penalty += 3500.0
-    penalty += 2.5 * max(0.0, continuous_p95 - target_continuous_power_p95_pct) ** 2
+    penalty += 0.40 * max(0.0, continuous_p95 - target_continuous_power_p95_pct) ** 2
+    penalty += 1.5 * max(0.0, 25.0 - burst_reserve_min_pct) ** 2
+    penalty += 8000.0 * max(0.0, burst_clip_time_s - 0.05) ** 2
     penalty += 0.90 * max(0.0, flap_peak - target_flap_peak_pct) ** 2
     penalty += 50.0 * max(0.0, flap_tracking - 2.0) ** 2
     penalty += 2.0 * max(0.0, fan_tracking_pct - target_fan_tracking_pct) ** 2
@@ -776,12 +799,12 @@ def render_maneuver_pack_markdown(payload: dict) -> str:
         f"Mode: {'maneuver-safe' if payload.get('maneuver_safe') else 'raw'}",
         f"Worst status: {payload.get('worst_status', 'n/a')}",
         '',
-        '| Status | Fault Case | Dir B (deg) | Aggr | Stop Time (s) | Reversal (s) | Align (s) | Yaw Hold Err (deg) | Flap Peak (%) | Fan Track (%) | Power P95 (%) |',
-        '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+        '| Status | Fault Case | Dir B (deg) | Aggr | Stop Time (s) | Reversal (s) | Align (s) | Yaw Hold Err (deg) | Flap Peak (%) | Fan Track (%) | Sust. P95 (%) | Raw P95 (%) | Burst Min (%) | Clip Time (s) |',
+        '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
     ]
     for rec in payload['results']:
         lines.append(
-            '| {status} | {fault_case} | {dir_b_deg:.0f} | {aggr} | {stop} | {reversal} | {align} | {yaw} | {flap} | {fan} | {power} |'.format(
+            '| {status} | {fault_case} | {dir_b_deg:.0f} | {aggr} | {stop} | {reversal} | {align} | {yaw} | {flap} | {fan} | {power} | {power_raw} | {burst_min} | {burst_clip} |'.format(
                 status=rec['status'],
                 fault_case=rec['fault_case'],
                 dir_b_deg=rec['dir_b_deg'],
@@ -793,6 +816,9 @@ def render_maneuver_pack_markdown(payload: dict) -> str:
                 flap=('n/a' if rec['flap_limit_usage_peak_pct'] is None else f"{rec['flap_limit_usage_peak_pct']:.1f}"),
                 fan=('n/a' if rec['fan_tracking_rms_pct_mean_cmd'] is None else f"{rec['fan_tracking_rms_pct_mean_cmd']:.1f}"),
                 power=('n/a' if rec['continuous_power_p95_pct'] is None else f"{rec['continuous_power_p95_pct']:.1f}"),
+                power_raw=('n/a' if rec.get('continuous_power_raw_p95_pct') is None else f"{rec['continuous_power_raw_p95_pct']:.1f}"),
+                burst_min=('n/a' if rec.get('burst_reserve_min_pct') is None else f"{rec['burst_reserve_min_pct']:.1f}"),
+                burst_clip=('n/a' if rec.get('burst_clip_time_s') is None else f"{rec['burst_clip_time_s']:.2f}"),
             )
         )
     return '\n'.join(lines) + '\n'
@@ -3837,6 +3863,7 @@ def alloc_step_snap(
     speed_stop_thr_mps: float = typer.Option(0.2, "--stop-thr-mps", help="Speed threshold considered 'stopped'"),
     redirect_hold_frac: float = typer.Option(-1.0, "--redirect-hold-frac", help="Fraction of the snap window kept as pure braking before steering toward the new direction. Negative = auto"),
     redirect_steer_scale: float = typer.Option(1.0, "--redirect-steer-scale", help="Scaling applied to the snap revector blend during sharp redirects"),
+    eco: bool = typer.Option(False, "--eco/--no-eco", help="Use the dedicated low-power eco snap profile"),
     fault_case: str = typer.Option("nominal", "--fault-case", help="Fault case component or composite, for example nominal or slow-flap-0"),
     maneuver_safe: bool = typer.Option(False, "--maneuver-safe/--no-maneuver-safe", help="Auto-tune redirect aggressiveness against power, flap, fan, and yaw limits"),
     power_target_pct: float = typer.Option(100.0, "--power-target-pct", help="Target p95 continuous-power percentage when --maneuver-safe is enabled"),
@@ -3870,9 +3897,10 @@ def alloc_step_snap(
         'redirect_steer_scale': redirect_steer_scale,
     }
 
+    profile_name = 'step-snap-eco' if eco else 'step-snap'
     if maneuver_safe:
         out, _hist, assessment, tuning = tune_maneuver_profile(
-            'step-snap',
+            profile_name,
             base_kwargs,
             target_continuous_power_p95_pct=power_target_pct,
             target_flap_peak_pct=flap_target_pct,
@@ -3884,8 +3912,8 @@ def alloc_step_snap(
         )
         out['maneuver_tuning'] = tuning
     else:
-        out, _hist = _run_maneuver_profile('step-snap', **base_kwargs)
-        assessment = assess_maneuver_result(out, _hist, 'step-snap')
+        out, _hist = _run_maneuver_profile(profile_name, **base_kwargs)
+        assessment = assess_maneuver_result(out, _hist, profile_name)
     out['fault'] = summarize_fault_case(normalized_fault_case, fault)
     out['maneuver_assessment'] = assessment
     if trace_out:
@@ -3895,7 +3923,7 @@ def alloc_step_snap(
 
 @alloc_app.command("maneuver-pack")
 def alloc_maneuver_pack(
-    profile: str = typer.Option("step-snap", "--profile", help="Maneuver profile: step, step-snap, step-redirect, or step-redirect-eco"),
+    profile: str = typer.Option("step-snap", "--profile", help="Maneuver profile: step, step-snap, step-snap-eco, step-redirect, or step-redirect-eco"),
     dir_b_deg: list[float] = typer.Option([], "--dir-b-deg", help="Redirect target angle(s). Repeat; defaults to 45, 90, 135, 180."),
     fault_case: list[str] = typer.Option([], "--fault-case", help="Fault case(s). Repeat; defaults to the maneuver-focused set."),
     fault_set: str = typer.Option("maneuver", "--fault-set", help="Fault set: maneuver, nominal, core, stress, or all"),
@@ -3927,8 +3955,8 @@ def alloc_maneuver_pack(
     out_dir: str = typer.Option("runs/maneuver_pack", "--out-dir", help="Output directory for summary artifacts"),
 ):
     profile = profile.strip().lower()
-    if profile not in {"step", "step-snap", "step-redirect", "step-redirect-eco"}:
-        raise typer.BadParameter("--profile must be 'step', 'step-snap', 'step-redirect', or 'step-redirect-eco'")
+    if profile not in {"step", "step-snap", "step-snap-eco", "step-redirect", "step-redirect-eco"}:
+        raise typer.BadParameter("--profile must be 'step', 'step-snap', 'step-snap-eco', 'step-redirect', or 'step-redirect-eco'")
 
     angles = [float(angle) for angle in (dir_b_deg or MANEUVER_DEFAULT_ANGLES)]
     selected_fault_cases = select_fault_cases(list(fault_case), fault_set)
@@ -4007,6 +4035,10 @@ def alloc_maneuver_pack(
                 'fan_tracking_rms_pct_mean_cmd': engineering['fans']['tracking_rms_pct_mean_cmd'],
                 'fan_response_min_pct': engineering['fans']['response_min_pct'],
                 'continuous_power_p95_pct': engineering['thermal']['continuous_power_p95_pct'],
+                'continuous_power_raw_p95_pct': engineering['thermal'].get('continuous_power_raw_p95_pct'),
+                'burst_reserve_min_pct': engineering['thermal'].get('burst_reserve_min_pct'),
+                'burst_clip_time_s': engineering['thermal'].get('burst_clip_time_s'),
+                'burst_active_time_s': engineering['thermal'].get('burst_active_time_s'),
                 'thrust_scale_min_pct': engineering['power']['thrust_scale_min_pct'],
             }
             results.append(result)
@@ -4049,7 +4081,8 @@ def alloc_maneuver_pack(
         'min_speed_transition_mps', 'peak_speed_mps', 'yaw_hold_error_mean_abs_deg', 'yaw_track_decoupling_mean_abs_deg',
         'xy_tracking_rms_n', 'alignment_p95_deg', 'flap_limit_usage_peak_pct',
         'flap_tracking_rms_deg', 'fan_tracking_rms_pct_mean_cmd', 'fan_response_min_pct',
-        'continuous_power_p95_pct', 'thrust_scale_min_pct', 'warnings',
+        'continuous_power_p95_pct', 'continuous_power_raw_p95_pct', 'burst_reserve_min_pct', 'burst_clip_time_s', 'burst_active_time_s',
+        'thrust_scale_min_pct', 'warnings',
     ]
     with (out_path / 'summary.csv').open('w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)

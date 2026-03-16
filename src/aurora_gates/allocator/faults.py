@@ -2,6 +2,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
 
+from ..topology import default_ring_topology
+
 _ALPHA_LIMIT_RAD = np.deg2rad(25.0)
 
 @dataclass(frozen=True)
@@ -60,18 +62,8 @@ def apply_faults_to_alpha(alpha_rad: np.ndarray, fault: FaultSpec) -> np.ndarray
 
 def apply_faults_to_thrust(thrust_per_seg_n: np.ndarray, fault: FaultSpec) -> np.ndarray:
     t = thrust_per_seg_n.copy()
-    if fault.dead_fan_group is not None:
-        g = int(fault.dead_fan_group)
-        if 0 <= g < 16:
-            s0 = 2 * g
-            s1 = 2 * g + 1
-            scale = float(fault.dead_fan_scale)
-            if 0 <= s0 < len(t):
-                t[s0] *= scale
-            if 0 <= s1 < len(t):
-                t[s1] *= scale
-    if fault.plenum_sector_idx is not None:
-        i = int(fault.plenum_sector_idx)
-        if 0 <= i < len(t):
-            t[i] *= float(fault.plenum_sector_scale)
+    topology = default_ring_topology(len(t))
+    scale = topology.segment_effectiveness_scales(fault)
+    if scale.shape == t.shape:
+        t *= scale
     return t

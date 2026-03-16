@@ -97,8 +97,16 @@ def assess_trace(meta: dict, hist: dict, geom: RingGeometry | None = None) -> di
     power_w = _series(hist, 'power_w')
     energy_wh = _series(hist, 'energy_wh')
     thrust_scale_pct = _series(hist, 'thrust_scale_pct')
-    continuous_power_pct = _series(hist, 'continuous_power_pct')
+    continuous_power_raw_pct = _series(hist, 'continuous_power_raw_pct')
+    if continuous_power_raw_pct.size == 0:
+        continuous_power_raw_pct = _series(hist, 'continuous_power_pct')
+    sustained_power_pct = _series(hist, 'sustained_power_pct')
+    if sustained_power_pct.size == 0:
+        sustained_power_pct = _series(hist, 'continuous_power_pct')
     power_margin_kw = _series(hist, 'power_margin_kw')
+    burst_reserve_pct = _series(hist, 'burst_reserve_pct')
+    burst_clip_pct = _series(hist, 'burst_clip_pct')
+    burst_active_time_hist = _series(hist, 'burst_active_time_s')
     thermal_scale_pct = _series(hist, 'thermal_scale_pct')
     fan_temp_max_c = _series(hist, 'fan_temp_max_c')
     fan_temp_mean_c = _series(hist, 'fan_temp_mean_c')
@@ -166,12 +174,20 @@ def assess_trace(meta: dict, hist: dict, geom: RingGeometry | None = None) -> di
 
     guard_active_mask = budget_ratio < 0.999 if budget_ratio.size else np.asarray([], dtype=bool)
     guard_heavy_mask = budget_ratio < 0.75 if budget_ratio.size else np.asarray([], dtype=bool)
+    burst_clip_mask = burst_clip_pct > 0.1 if burst_clip_pct.size else np.asarray([], dtype=bool)
+    burst_active_mask = continuous_power_raw_pct > 100.0 if continuous_power_raw_pct.size else np.asarray([], dtype=bool)
+    burst_clip_time_s = _scalar(np.sum(burst_clip_mask) * dt_s if burst_clip_mask.size else 0.0)
+    burst_active_time_s = _scalar(np.sum(burst_active_mask) * dt_s if burst_active_mask.size else (np.sum(burst_active_time_hist) if burst_active_time_hist.size else 0.0))
+    burst_reserve_min_pct = _scalar(np.min(burst_reserve_pct) if burst_reserve_pct.size else None)
 
     warnings: list[str] = []
     if thrust_scale_pct.size and float(np.min(thrust_scale_pct)) < 90.0:
         warnings.append('power-thrust derating fell below 90%')
-    if continuous_power_pct.size and float(np.percentile(continuous_power_pct, 95.0)) > 100.0:
-        warnings.append('continuous power demand exceeded 100% for a sustained portion of the run')
+    if burst_clip_time_s is not None and burst_clip_time_s > 0.05:
+        warnings.append('burst-power reserve was exhausted and thrust had to be clipped')
+    elif continuous_power_raw_pct.size and float(np.percentile(continuous_power_raw_pct, 95.0)) > 100.0:
+        if burst_reserve_min_pct is not None and burst_reserve_min_pct < 25.0:
+            warnings.append('continuous power demand relied too heavily on burst reserve')
     if thermal_scale_pct.size and float(np.min(thermal_scale_pct)) < 95.0:
         warnings.append('thermal derating pulled available thrust below 95%')
     if battery_v.size and power_cfg:
@@ -260,8 +276,14 @@ def assess_trace(meta: dict, hist: dict, geom: RingGeometry | None = None) -> di
             'fan_temp_peak_c': _scalar(np.max(fan_temp_max_c) if fan_temp_max_c.size else None),
             'thermal_scale_min_pct': _scalar(np.min(thermal_scale_pct) if thermal_scale_pct.size else None),
             'thermal_scale_p05_pct': _percentile(thermal_scale_pct, 5.0),
-            'continuous_power_p95_pct': _percentile(continuous_power_pct, 95.0),
-            'continuous_power_peak_pct': _scalar(np.max(continuous_power_pct) if continuous_power_pct.size else None),
+            'continuous_power_p95_pct': _percentile(sustained_power_pct, 95.0),
+            'continuous_power_peak_pct': _scalar(np.max(sustained_power_pct) if sustained_power_pct.size else None),
+            'continuous_power_raw_p95_pct': _percentile(continuous_power_raw_pct, 95.0),
+            'continuous_power_raw_peak_pct': _scalar(np.max(continuous_power_raw_pct) if continuous_power_raw_pct.size else None),
+            'burst_reserve_min_pct': _scalar(np.min(burst_reserve_pct) if burst_reserve_pct.size else None),
+            'burst_reserve_p05_pct': _percentile(burst_reserve_pct, 5.0),
+            'burst_clip_time_s': burst_clip_time_s,
+            'burst_active_time_s': burst_active_time_s,
             'power_margin_min_kw': _scalar(np.min(power_margin_kw) if power_margin_kw.size else None),
         },
         'guard': {

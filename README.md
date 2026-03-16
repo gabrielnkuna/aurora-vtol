@@ -7,6 +7,7 @@ This project contains the Project Aurora "Allocator" prototypes up to V4:
 - V4: repel-from-point field + fault injection + JSON trace export for dashboard replay
 
 See [docs/hardware_control_architecture.md](/home/gabriel/projects/aurora-allocator-v4/docs/hardware_control_architecture.md) for the current software-to-hardware control mapping of the 16-fan / 32-vane concept.
+See [docs/engineering_review_checklist.md](/home/gabriel/projects/aurora-allocator-v4/docs/engineering_review_checklist.md) for the review standard we should apply to control, plant, power, and bridge changes.
 
 ## Setup (WSL recommended)
 ```bash
@@ -125,6 +126,7 @@ In addition to the headline metrics, trace JSONs now record per‑segment data:
 
 These arrays enable ring‑visualization of flap deflections or 16‑fan thrust
 patterns in both repel and step‑snap traces.
+
 
 
 
