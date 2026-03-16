@@ -131,12 +131,19 @@ class RingActuatorTopology:
             return np.zeros(self.fan_count, dtype=float)
         return np.sum(influence, axis=1)
 
+    def _require_segment_count(self, size: int, *, context: str) -> None:
+        if int(size) != self.segment_count:
+            raise ValueError(f"{context} count {int(size)} != topology segment_count {self.segment_count}")
+
+    def _require_fan_count(self, size: int, *, context: str) -> None:
+        if int(size) != self.fan_count:
+            raise ValueError(f"{context} count {int(size)} != topology fan_count {self.fan_count}")
+
     def smooth_segment_values(self, values) -> np.ndarray:
         arr = np.asarray(values, dtype=float)
         if arr.size == 0:
             return arr.copy()
-        if arr.size != self.segment_count:
-            return default_ring_topology(int(arr.size)).smooth_segment_values(arr)
+        self._require_segment_count(arr.size, context="segment value")
         influence = self.fan_segment_influence
         if influence.size == 0:
             return arr.copy()
@@ -148,8 +155,7 @@ class RingActuatorTopology:
         arr = np.asarray(values, dtype=float)
         if arr.size == 0:
             return []
-        if arr.size != self.segment_count:
-            return default_ring_topology(int(arr.size)).segment_values_to_fan_means(arr)
+        self._require_segment_count(arr.size, context="segment value")
         influence = self.fan_segment_influence
         row_sums = np.where(self.fan_effective_segment_counts > 1e-12, self.fan_effective_segment_counts, 1.0)
         weighted = influence @ arr
@@ -160,8 +166,8 @@ class RingActuatorTopology:
         targets = np.asarray(segment_targets_n, dtype=float)
         if targets.size == 0:
             return targets.copy()
-        if targets.size != self.segment_count:
-            return default_ring_topology(int(targets.size)).distribute_fan_means_to_segments(fan_mean, targets)
+        self._require_segment_count(targets.size, context="segment target")
+        self._require_fan_count(fan_mean.size, context="fan mean")
 
         influence = self.fan_segment_influence
         row_sums = self.fan_effective_segment_counts

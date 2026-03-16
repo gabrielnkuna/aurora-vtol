@@ -74,6 +74,21 @@ class RedirectControlResult:
     command_uy: float
 
 
+def _zero_directional_wrench(
+    *,
+    fz_n: float,
+    mz_nm: float,
+    source: str,
+) -> DesiredWrench:
+    return DesiredWrench(
+        fx_n=0.0,
+        fy_n=0.0,
+        fz_n=float(fz_n),
+        mz_nm=float(mz_nm),
+        source=source,
+    )
+
+
 def track_redirect_velocity(
     state: EstimatedVehicleState,
     target: RedirectTarget,
@@ -84,8 +99,20 @@ def track_redirect_velocity(
 ) -> RedirectControlResult:
     desired_mag = math.hypot(target.desired_ux, target.desired_uy)
     if desired_mag < 1e-6:
-        desired_ux = 1.0
-        desired_uy = 0.0
+        return RedirectControlResult(
+            desired_wrench=_zero_directional_wrench(
+                fz_n=0.0,
+                mz_nm=mz_nm,
+                source=source,
+            ),
+            raw_fx_n=0.0,
+            raw_fy_n=0.0,
+            clip_scale=1.0,
+            along_speed_mps=0.0,
+            cross_speed_mps=0.0,
+            command_ux=0.0,
+            command_uy=0.0,
+        )
     else:
         desired_ux = float(target.desired_ux / desired_mag)
         desired_uy = float(target.desired_uy / desired_mag)
@@ -103,8 +130,7 @@ def track_redirect_velocity(
     raw_y = along_cmd * desired_uy + float(target.cross_gain) * cross_cmd * cross_uy
     raw_mag = math.hypot(raw_x, raw_y)
     if raw_mag < 1e-6:
-        raw_x, raw_y = desired_ux, desired_uy
-        raw_mag = 1.0
+        raw_x, raw_y = 0.0, 0.0
     if raw_mag > 1.0:
         raw_x /= raw_mag
         raw_y /= raw_mag
@@ -152,7 +178,18 @@ def command_directional_force(
 ) -> DirectionalForceControlResult:
     mag = math.hypot(command_ux, command_uy)
     if mag < 1e-6:
-        ux, uy = 1.0, 0.0
+        return DirectionalForceControlResult(
+            desired_wrench=_zero_directional_wrench(
+                fz_n=fz_n,
+                mz_nm=mz_nm,
+                source=source,
+            ),
+            raw_fx_n=0.0,
+            raw_fy_n=0.0,
+            clip_scale=1.0,
+            command_ux=0.0,
+            command_uy=0.0,
+        )
     else:
         ux = float(command_ux / mag)
         uy = float(command_uy / mag)

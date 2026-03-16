@@ -344,20 +344,20 @@ def step_vehicle(state: SimState, fx: float, fy: float, fz: float, mz: float, p:
     state.yaw_deg = (state.yaw_deg + state.yaw_rate_deg_s * p.dt_s + 180.0) % 360.0 - 180.0
 
 
-def pair_segments_to_fans(values) -> list[float]:
+def pair_segments_to_fans(values, topology=None) -> list[float]:
     arr = np.asarray(values, dtype=float)
     if arr.size == 0:
         return []
-    topology = default_ring_topology(int(arr.size))
-    return topology.segment_values_to_fan_means(arr)
+    active_topology = default_ring_topology(int(arr.size)) if topology is None else topology
+    return active_topology.segment_values_to_fan_means(arr)
 
 
-def fan_means_to_segments(fan_mean_n, segment_targets_n) -> np.ndarray:
+def fan_means_to_segments(fan_mean_n, segment_targets_n, topology=None) -> np.ndarray:
     targets = np.asarray(segment_targets_n, dtype=float)
     if targets.size == 0:
         return targets.copy()
-    topology = default_ring_topology(int(targets.size))
-    return topology.distribute_fan_means_to_segments(fan_mean_n, targets)
+    active_topology = default_ring_topology(int(targets.size)) if topology is None else topology
+    return active_topology.distribute_fan_means_to_segments(fan_mean_n, targets)
 
 
 def temperature_to_thermal_scale(temp_c, power: PowerSystemParams) -> np.ndarray:
