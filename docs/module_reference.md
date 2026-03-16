@@ -27,17 +27,17 @@ Responsibilities:
 
 Representative command groups:
 
-- `aurora alloc demo`
-- `aurora alloc step`
-- `aurora alloc coordinates`
-- `aurora alloc repel`
-- `aurora alloc step-redirect`
-- `aurora alloc step-snap`
-- `aurora alloc maneuver-pack`
-- `aurora bridge inspect`
-- `aurora bridge trace`
-- `aurora bridge mp`
-- `aurora bridge sitl`
+- `aurora-vtol alloc demo`
+- `aurora-vtol alloc step`
+- `aurora-vtol alloc coordinates`
+- `aurora-vtol alloc repel`
+- `aurora-vtol alloc step-redirect`
+- `aurora-vtol alloc step-snap`
+- `aurora-vtol alloc maneuver-pack`
+- `aurora-vtol bridge inspect`
+- `aurora-vtol bridge trace`
+- `aurora-vtol bridge mp`
+- `aurora-vtol bridge sitl`
 
 ### `icd.py`
 

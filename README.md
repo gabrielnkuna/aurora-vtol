@@ -1,4 +1,4 @@
-﻿# Aurora Allocator V4+
+# Aurora VTOL
 
 Aurora is a software-first control, maneuver, and simulation stack for a 16-fan / 32-vane ring vehicle. The repository studies how guidance, vehicle control, control allocation, actuator dynamics, power limits, fault handling, and bridge tooling work together for a UFO-style VTOL concept.
 
@@ -12,14 +12,14 @@ This project is best understood as a flight-control and validation stack, not ye
 
 ## What the repo currently includes
 
-- A typed interface layer in [`src/aurora_gates/icd.py`](src/aurora_gates/icd.py)
-- A vehicle controller layer in [`src/aurora_gates/vehicle_controller.py`](src/aurora_gates/vehicle_controller.py)
-- A topology layer in [`src/aurora_gates/topology.py`](src/aurora_gates/topology.py)
-- A fault-aware allocator core in [`src/aurora_gates/allocator/allocate.py`](src/aurora_gates/allocator/allocate.py)
-- Dynamics and fault models in [`src/aurora_gates/allocator/dynamics.py`](src/aurora_gates/allocator/dynamics.py) and [`src/aurora_gates/allocator/faults.py`](src/aurora_gates/allocator/faults.py)
-- Mission, plant, and power simulation in [`src/aurora_gates/allocator/sim.py`](src/aurora_gates/allocator/sim.py)
-- Engineering assessment and tuning helpers in [`src/aurora_gates/allocator/engineering.py`](src/aurora_gates/allocator/engineering.py)
-- Bridge, Mission Planner, and SITL tooling in [`src/aurora_gates/bridge.py`](src/aurora_gates/bridge.py) and [`scripts/trace_to_tlog.py`](scripts/trace_to_tlog.py)
+- A typed interface layer in [`src/aurora_vtol/icd.py`](src/aurora_vtol/icd.py)
+- A vehicle controller layer in [`src/aurora_vtol/vehicle_controller.py`](src/aurora_vtol/vehicle_controller.py)
+- A topology layer in [`src/aurora_vtol/topology.py`](src/aurora_vtol/topology.py)
+- A fault-aware allocator core in [`src/aurora_vtol/allocator/allocate.py`](src/aurora_vtol/allocator/allocate.py)
+- Dynamics and fault models in [`src/aurora_vtol/allocator/dynamics.py`](src/aurora_vtol/allocator/dynamics.py) and [`src/aurora_vtol/allocator/faults.py`](src/aurora_vtol/allocator/faults.py)
+- Mission, plant, and power simulation in [`src/aurora_vtol/allocator/sim.py`](src/aurora_vtol/allocator/sim.py)
+- Engineering assessment and tuning helpers in [`src/aurora_vtol/allocator/engineering.py`](src/aurora_vtol/allocator/engineering.py)
+- Bridge, Mission Planner, and SITL tooling in [`src/aurora_vtol/bridge.py`](src/aurora_vtol/bridge.py) and [`scripts/trace_to_tlog.py`](scripts/trace_to_tlog.py)
 
 ## High-level architecture
 
@@ -51,7 +51,7 @@ Trace Export + Replay + Bridge / SITL
 ## Repository layout
 
 ```text
-src/aurora_gates/
+src/aurora_vtol/
   cli.py
   icd.py
   topology.py
@@ -81,34 +81,34 @@ scripts/
 ```bash
 uv venv
 uv sync
-uv run aurora --help
+uv run aurora-vtol --help
 ```
 
 ### Core allocator and maneuver demos
 
 ```bash
-uv run aurora alloc demo --version v2 --dir-deg 90 --fxy 3000 --mz-nm 0
-uv run aurora alloc step --dir-a-deg 0 --dir-b-deg 180 --fxy 3000 --step-time-s 3 --total-s 8
-uv run aurora alloc repel --ox 30 --oy 0 --radius-m 30 --k 120 --trace-out runs/trace_repel.json
-uv run aurora alloc step-redirect --dir-b-deg 90 --maneuver-safe --trace-out runs/trace_step_redirect_90.json
-uv run aurora alloc step-snap --dir-b-deg 180 --maneuver-safe --eco --trace-out runs/trace_step_snap_180_eco.json
+uv run aurora-vtol alloc demo --version v2 --dir-deg 90 --fxy 3000 --mz-nm 0
+uv run aurora-vtol alloc step --dir-a-deg 0 --dir-b-deg 180 --fxy 3000 --step-time-s 3 --total-s 8
+uv run aurora-vtol alloc repel --ox 30 --oy 0 --radius-m 30 --k 120 --trace-out runs/trace_repel.json
+uv run aurora-vtol alloc step-redirect --dir-b-deg 90 --maneuver-safe --trace-out runs/trace_step_redirect_90.json
+uv run aurora-vtol alloc step-snap --dir-b-deg 180 --maneuver-safe --eco --trace-out runs/trace_step_snap_180_eco.json
 ```
 
 ### Mission and engineering workflows
 
 ```bash
-uv run aurora alloc coordinates --preset medium --power-safe --trace-out runs/trace_coordinates_medium.json
-uv run aurora alloc assess --trace runs/trace_coordinates_medium.json --format text
-uv run aurora alloc power-sweep --preset medium --continuous-power-kw 125 --continuous-power-kw 130
-uv run aurora alloc maneuver-pack --profile step-snap-eco --maneuver-safe --out-dir runs/maneuver_pack_step_snap_eco_demo
+uv run aurora-vtol alloc coordinates --preset medium --power-safe --trace-out runs/trace_coordinates_medium.json
+uv run aurora-vtol alloc assess --trace runs/trace_coordinates_medium.json --format text
+uv run aurora-vtol alloc power-sweep --preset medium --continuous-power-kw 125 --continuous-power-kw 130
+uv run aurora-vtol alloc maneuver-pack --profile step-snap-eco --maneuver-safe --out-dir runs/maneuver_pack_step_snap_eco_demo
 ```
 
 ### Bridge and replay workflows
 
 ```bash
-uv run aurora bridge inspect --script runs/bridge_coordinates_long.jsonl --svg-out runs/bridge_coordinates_long.svg
-uv run aurora bridge trace --trace runs/trace_coordinates_medium.json --jsonl-out runs/bridge_coordinates_medium.jsonl
-uv run aurora bridge sitl --help
+uv run aurora-vtol bridge inspect --script runs/bridge_coordinates_long.jsonl --svg-out runs/bridge_coordinates_long.svg
+uv run aurora-vtol bridge trace --trace runs/trace_coordinates_medium.json --jsonl-out runs/bridge_coordinates_medium.jsonl
+uv run aurora-vtol bridge sitl --help
 python scripts/trace_to_tlog.py --trace runs/trace_coordinates_medium.json --out listen:127.0.0.1:5770 --home-lat -26.2041 --home-lon 28.0473
 ```
 

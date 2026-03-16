@@ -76,7 +76,7 @@ The controller decides things like:
 - reverse into a new direction
 - respect available lateral authority
 
-This layer keeps mission logic out of the allocator. The current implementation is in [`src/aurora_gates/vehicle_controller.py`](../src/aurora_gates/vehicle_controller.py).
+This layer keeps mission logic out of the allocator. The current implementation is in [`src/aurora_vtol/vehicle_controller.py`](../src/aurora_vtol/vehicle_controller.py).
 
 ### 2.3 Allocator
 
@@ -95,7 +95,7 @@ Outputs:
 - tangential or yaw-related commands
 - fan-group or segment-level authority distribution
 
-This remains the mathematical core of Aurora and lives primarily in [`src/aurora_gates/allocator/allocate.py`](../src/aurora_gates/allocator/allocate.py).
+This remains the mathematical core of Aurora and lives primarily in [`src/aurora_vtol/allocator/allocate.py`](../src/aurora_vtol/allocator/allocate.py).
 
 ### 2.4 Actuator Dynamics and Faults
 
@@ -110,7 +110,7 @@ Included behaviors:
 - dead fan groups
 - degraded plenum sectors
 
-This is where Aurora becomes more physically honest than a perfect instantaneous solver. See [`src/aurora_gates/allocator/dynamics.py`](../src/aurora_gates/allocator/dynamics.py) and [`src/aurora_gates/allocator/faults.py`](../src/aurora_gates/allocator/faults.py).
+This is where Aurora becomes more physically honest than a perfect instantaneous solver. See [`src/aurora_vtol/allocator/dynamics.py`](../src/aurora_vtol/allocator/dynamics.py) and [`src/aurora_vtol/allocator/faults.py`](../src/aurora_vtol/allocator/faults.py).
 
 ### 2.5 Plant / Mission / Power Simulation
 
@@ -124,7 +124,7 @@ Representative responsibilities:
 - maneuver scoring and engineering telemetry
 - trace export
 
-The main implementation is in [`src/aurora_gates/allocator/sim.py`](../src/aurora_gates/allocator/sim.py) with assessment in [`src/aurora_gates/allocator/engineering.py`](../src/aurora_gates/allocator/engineering.py).
+The main implementation is in [`src/aurora_vtol/allocator/sim.py`](../src/aurora_vtol/allocator/sim.py) with assessment in [`src/aurora_vtol/allocator/engineering.py`](../src/aurora_vtol/allocator/engineering.py).
 
 ### 2.6 Bridge / Replay / SITL
 
@@ -139,7 +139,7 @@ Use cases:
 - integrate with Mission Planner and ArduPilot SITL
 - replay traces directly into Mission Planner using `scripts/trace_to_tlog.py`
 
-The bridge path is in [`src/aurora_gates/bridge.py`](../src/aurora_gates/bridge.py). The direct Mission Planner replay path is in [`scripts/trace_to_tlog.py`](../scripts/trace_to_tlog.py).
+The bridge path is in [`src/aurora_vtol/bridge.py`](../src/aurora_vtol/bridge.py). The direct Mission Planner replay path is in [`scripts/trace_to_tlog.py`](../scripts/trace_to_tlog.py).
 
 ## 3. Main data flow
 
@@ -170,7 +170,7 @@ plant / mission / assessment
 telemetry + trace export + bridge output
 ```
 
-That split is now reflected in the repo structure through [`src/aurora_gates/icd.py`](../src/aurora_gates/icd.py), [`src/aurora_gates/vehicle_controller.py`](../src/aurora_gates/vehicle_controller.py), [`src/aurora_gates/topology.py`](../src/aurora_gates/topology.py), and [`src/aurora_gates/effectiveness.py`](../src/aurora_gates/effectiveness.py).
+That split is now reflected in the repo structure through [`src/aurora_vtol/icd.py`](../src/aurora_vtol/icd.py), [`src/aurora_vtol/vehicle_controller.py`](../src/aurora_vtol/vehicle_controller.py), [`src/aurora_vtol/topology.py`](../src/aurora_vtol/topology.py), and [`src/aurora_vtol/effectiveness.py`](../src/aurora_vtol/effectiveness.py).
 
 ## 4. Topology model
 
@@ -187,7 +187,7 @@ The current topology model is a strong intermediate step between pure abstractio
 - plenum-sector degradation
 - grouped fault behavior
 
-The current default mapping is defined in [`src/aurora_gates/topology.py`](../src/aurora_gates/topology.py). It is explicit, but still simple. It should be treated as the current engineering assumption, not frozen hardware truth.
+The current default mapping is defined in [`src/aurora_vtol/topology.py`](../src/aurora_vtol/topology.py). It is explicit, but still simple. It should be treated as the current engineering assumption, not frozen hardware truth.
 
 ## 5. Control ownership for future hardware
 

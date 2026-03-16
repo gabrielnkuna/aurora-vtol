@@ -1,7 +1,7 @@
 [project]
-name = "aurora-allocator-v4"
+name = "aurora-vtol"
 version = "0.1.0"
-description = "Project Aurora Allocator prototypes V1–V4 with CLI demos"
+description = "Aurora VTOL control, maneuver, and simulation stack"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
-aurora = "aurora_gates.cli:app"
+aurora-vtol = "aurora_vtol.cli:app"
 
 [build-system]
 requires = ["hatchling"]
@@ -18,7 +18,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 # explicitly list package directories so hatch can build editable installs
-packages = ["src/aurora_gates"]
+packages = ["src/aurora_vtol"]
 
 [tool.ruff]
 line-length = 100

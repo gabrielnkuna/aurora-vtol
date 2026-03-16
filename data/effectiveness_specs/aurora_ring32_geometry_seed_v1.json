@@ -1,6 +1,6 @@
 {
-  "schema_version": "aurora.effectiveness-spec.v1",
-  "spec_name": "aurora-ring32-geometry-seed-v1",
+  "schema_version": "aurora-vtol.effectiveness-spec.v1",
+  "spec_name": "aurora-vtol-ring32-geometry-seed-v1",
   "segment_count": 32,
   "fan_center_deg": [
     5.625,

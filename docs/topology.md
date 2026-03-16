@@ -14,7 +14,7 @@ Related docs:
 
 Aurora models the vehicle as a segmented ring with explicit fan-group and plenum-sector ownership. The topology layer exists so that actuator coupling, grouped degradation, and authority scaling are not hidden inside the allocator or simulation loops.
 
-The implementation lives in [`src/aurora_gates/topology.py`](../src/aurora_gates/topology.py).
+The implementation lives in [`src/aurora_vtol/topology.py`](../src/aurora_vtol/topology.py).
 
 ## Current topology objects
 

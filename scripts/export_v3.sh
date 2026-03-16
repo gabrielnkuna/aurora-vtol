@@ -2,17 +2,17 @@
 set -euo pipefail
 
 WEB_REPO="${WEB_REPO:-$HOME/flying-saucer}"
-OUT_DIR="$WEB_REPO/client/public/aurora/allocator"
+OUT_DIR="$WEB_REPO/client/public/aurora-vtol/allocator"
 mkdir -p "$OUT_DIR"
 
 echo "[export] Output dir: $OUT_DIR"
 
-uv run aurora alloc step \
+uv run aurora-vtol alloc step \
   --dir-a-deg 0 --dir-b-deg 180 \
   --fxy 3000 --step-time-s 3 --total-s 8 \
   | tee "$OUT_DIR/v3_step.json" >/dev/null
 
-uv run aurora alloc step-snap \
+uv run aurora-vtol alloc step-snap \
   --dir-a-deg 0 --dir-b-deg 180 \
   --fxy 1200 \
   --step-time-s 1.6 \

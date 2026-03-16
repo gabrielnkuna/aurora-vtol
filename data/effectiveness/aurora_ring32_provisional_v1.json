@@ -1,6 +1,6 @@
 {
-  "schema_version": "aurora.effectiveness.v1",
-  "table_name": "aurora-ring32-provisional-v1",
+  "schema_version": "aurora-vtol.effectiveness.v1",
+  "table_name": "aurora-vtol-ring32-provisional-v1",
   "segment_count": 32,
   "fan_count": 16,
   "plenum_count": 32,

@@ -1,6 +1,6 @@
 ﻿# Aurora Bridge Workflows
 
-Aurora's bridge layer converts simulated traces and planned motion into artifacts or live streams that external flight tools can consume. In the current repo, this functionality lives primarily in [`src/aurora_gates/bridge.py`](../src/aurora_gates/bridge.py) and is exposed through the `aurora bridge ...` CLI commands in [`src/aurora_gates/cli.py`](../src/aurora_gates/cli.py).
+Aurora's bridge layer converts simulated traces and planned motion into artifacts or live streams that external flight tools can consume. In the current repo, this functionality lives primarily in [`src/aurora_vtol/bridge.py`](../src/aurora_vtol/bridge.py) and is exposed through the `aurora-vtol bridge ...` CLI commands in [`src/aurora_vtol/cli.py`](../src/aurora_vtol/cli.py).
 
 The bridge is not just export plumbing. It is a control-path component that must preserve:
 
@@ -66,7 +66,7 @@ This mapping is one of the most important bridge truth boundaries in the repo.
 ### CLI
 
 ```bash
-uv run aurora bridge trace --trace runs/trace_repel.json --jsonl-out runs/bridge_repel.jsonl
+uv run aurora-vtol bridge trace --trace runs/trace_repel.json --jsonl-out runs/bridge_repel.jsonl
 ```
 
 ### What happens
@@ -93,7 +93,7 @@ Use this when you want a deterministic replay artifact that can be inspected, ve
 ### CLI
 
 ```bash
-uv run aurora bridge inspect --script runs/bridge_repel.jsonl --svg-out runs/bridge_repel.svg
+uv run aurora-vtol bridge inspect --script runs/bridge_repel.jsonl --svg-out runs/bridge_repel.svg
 ```
 
 ### What happens
@@ -116,7 +116,7 @@ uv run aurora bridge inspect --script runs/bridge_repel.jsonl --svg-out runs/bri
 ### CLI
 
 ```bash
-uv run aurora bridge trace --trace runs/trace_repel.json --mavlink-out tcp:127.0.0.1:5771 --no-dry-run
+uv run aurora-vtol bridge trace --trace runs/trace_repel.json --mavlink-out tcp:127.0.0.1:5771 --no-dry-run
 ```
 
 ### What happens
@@ -144,7 +144,7 @@ Use this for live bridge testing against a MAVLink consumer or router.
 ### CLI
 
 ```bash
-uv run aurora bridge mp --trace runs/trace_coordinates_long.json --out runs/mission_coordinates_long.waypoints --home-lat -26.2041 --home-lon 28.0473
+uv run aurora-vtol bridge mp --trace runs/trace_coordinates_long.json --out runs/mission_coordinates_long.waypoints --home-lat -26.2041 --home-lon 28.0473
 ```
 
 ### What happens
@@ -181,7 +181,7 @@ Use this when you want to visualize the trace directly in Mission Planner withou
 ### CLI
 
 ```bash
-uv run aurora bridge sitl --trace runs/trace_coordinates_long.json --connect tcp:127.0.0.1:5760 --execute --takeoff-alt-m 2
+uv run aurora-vtol bridge sitl --trace runs/trace_coordinates_long.json --connect tcp:127.0.0.1:5760 --execute --takeoff-alt-m 2
 ```
 
 ### What happens

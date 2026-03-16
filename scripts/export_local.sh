@@ -10,21 +10,21 @@ mkdir -p "$OUT_DIR"
 
 echo "[export-local] Output dir: $OUT_DIR"
 
-uv run aurora alloc demo --version v1 --dir-deg 90 --fxy 3000 --mz-nm 0 \
+uv run aurora-vtol alloc demo --version v1 --dir-deg 90 --fxy 3000 --mz-nm 0 \
   | tee "$OUT_DIR/v1_demo.json" >/dev/null
 
-uv run aurora alloc demo --version v2 --dir-deg 90 --fxy 3000 --mz-nm 0 \
+uv run aurora-vtol alloc demo --version v2 --dir-deg 90 --fxy 3000 --mz-nm 0 \
   | tee "$OUT_DIR/v2_demo_mz0.json" >/dev/null
 
-uv run aurora alloc demo --version v2 --dir-deg 90 --fxy 3000 --mz-nm 2000 \
+uv run aurora-vtol alloc demo --version v2 --dir-deg 90 --fxy 3000 --mz-nm 2000 \
   | tee "$OUT_DIR/v2_demo_mz2000.json" >/dev/null
 
-uv run aurora alloc step \
+uv run aurora-vtol alloc step \
   --dir-a-deg 0 --dir-b-deg 180 \
   --fxy 3000 --step-time-s 3 --total-s 8 \
   | tee "$OUT_DIR/v3_step.json" >/dev/null
 
-uv run aurora alloc step-snap \
+uv run aurora-vtol alloc step-snap \
   --dir-a-deg 0 --dir-b-deg 180 \
   --fxy 1200 \
   --step-time-s 1.6 \
@@ -35,7 +35,7 @@ uv run aurora alloc step-snap \
   --total-s 8 \
   | tee "$OUT_DIR/v3_step_snap.json" >/dev/null
 
-uv run aurora alloc repel --ox 40 --oy 0 --radius-m 30 --k 600 \
+uv run aurora-vtol alloc repel --ox 40 --oy 0 --radius-m 30 --k 600 \
   --fxy-max 8000 --init-vx 2 --total-s 12 \
   --alpha-rate-deg-s 350 --plenum-tau-s 0.08 \
   --trace-out "$OUT_DIR/v4_repel_wall.json" \

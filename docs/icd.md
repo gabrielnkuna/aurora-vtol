@@ -1,6 +1,6 @@
 ﻿# Aurora Interface Control Document (ICD)
 
-This document defines the main software handoff objects used across the Aurora flight stack. In the current repo, these contracts live in [`src/aurora_gates/icd.py`](../src/aurora_gates/icd.py) and formalize how guidance, controller, allocator, and bridge-adjacent layers exchange state and intent.
+This document defines the main software handoff objects used across the Aurora flight stack. In the current repo, these contracts live in [`src/aurora_vtol/icd.py`](../src/aurora_vtol/icd.py) and formalize how guidance, controller, allocator, and bridge-adjacent layers exchange state and intent.
 
 The goal of this ICD is to make each layer independently testable while keeping units, ownership, and truth boundaries explicit.
 
@@ -87,7 +87,7 @@ Represents a position-tracking guidance objective.
 
 ### Typical producer and consumer
 
-Produced by mission or guidance logic. Consumed by `track_xy_position(...)` in [`src/aurora_gates/vehicle_controller.py`](../src/aurora_gates/vehicle_controller.py).
+Produced by mission or guidance logic. Consumed by `track_xy_position(...)` in [`src/aurora_vtol/vehicle_controller.py`](../src/aurora_vtol/vehicle_controller.py).
 
 ## 3. RedirectTarget
 
@@ -110,7 +110,7 @@ Represents a velocity-redirection style guidance command rather than a point-tra
 
 ### Typical producer and consumer
 
-Produced by redirect-style maneuver logic. Consumed by `track_redirect_velocity(...)` in [`src/aurora_gates/vehicle_controller.py`](../src/aurora_gates/vehicle_controller.py).
+Produced by redirect-style maneuver logic. Consumed by `track_redirect_velocity(...)` in [`src/aurora_vtol/vehicle_controller.py`](../src/aurora_vtol/vehicle_controller.py).
 
 ## 4. ActuatorHealthState
 

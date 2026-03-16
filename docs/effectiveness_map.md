@@ -21,7 +21,7 @@ That keeps the project honest in two ways:
 - the allocator can be driven by a hardware-facing table
 - provisional assumptions stay visible until they are replaced by CAD, CFD, or measured data
 
-The implementation lives in [`src/aurora_gates/effectiveness.py`](../src/aurora_gates/effectiveness.py).
+The implementation lives in [`src/aurora_vtol/effectiveness.py`](../src/aurora_vtol/effectiveness.py).
 
 ## Current default asset
 
@@ -108,7 +108,7 @@ In the current provisional table, it is effectively identity ownership.
 
 ## How the allocator uses it today
 
-The allocator now uses the explicit table for nominal force evaluation in [`src/aurora_gates/allocator/allocate.py`](../src/aurora_gates/allocator/allocate.py).
+The allocator now uses the explicit table for nominal force evaluation in [`src/aurora_vtol/allocator/allocate.py`](../src/aurora_vtol/allocator/allocate.py).
 
 Current use:
 

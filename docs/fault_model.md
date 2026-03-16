@@ -18,7 +18,7 @@ Aurora treats faults as first-class engineering inputs, not as afterthoughts. Th
 - what happens if one plenum sector degrades?
 - can the controller and allocator degrade gracefully?
 
-The main implementation lives in [`src/aurora_gates/allocator/faults.py`](../src/aurora_gates/allocator/faults.py), with topology effects in [`src/aurora_gates/topology.py`](../src/aurora_gates/topology.py).
+The main implementation lives in [`src/aurora_vtol/allocator/faults.py`](../src/aurora_vtol/allocator/faults.py), with topology effects in [`src/aurora_vtol/topology.py`](../src/aurora_vtol/topology.py).
 
 ## Core fault object
 
@@ -199,20 +199,20 @@ So the fault model is already useful and honest, but it is still a control-orien
 
 Faults are exercised through allocator commands such as:
 
-- `aurora alloc repel`
-- `aurora alloc step`
-- `aurora alloc step-redirect`
-- `aurora alloc step-snap`
-- `aurora alloc maneuver-pack`
-- `aurora alloc fault-envelope`
-- `aurora alloc fault-threshold`
+- `aurora-vtol alloc repel`
+- `aurora-vtol alloc step`
+- `aurora-vtol alloc step-redirect`
+- `aurora-vtol alloc step-snap`
+- `aurora-vtol alloc maneuver-pack`
+- `aurora-vtol alloc fault-envelope`
+- `aurora-vtol alloc fault-threshold`
 
 Representative examples:
 
 ```bash
-uv run aurora alloc step-redirect --fault-case biased-flap-0 --dir-b-deg 90
-uv run aurora alloc step-snap --fault-case dead-fan-0 --dir-b-deg 180
-uv run aurora alloc fault-envelope --preset medium --out-dir runs/fault_envelope_medium
+uv run aurora-vtol alloc step-redirect --fault-case biased-flap-0 --dir-b-deg 90
+uv run aurora-vtol alloc step-snap --fault-case dead-fan-0 --dir-b-deg 180
+uv run aurora-vtol alloc fault-envelope --preset medium --out-dir runs/fault_envelope_medium
 ```
 
 ## Truth boundary

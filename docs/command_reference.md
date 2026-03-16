@@ -16,16 +16,16 @@ See also:
 Aurora currently exposes two main command groups:
 
 ```text
-aurora alloc ...
-aurora bridge ...
+aurora-vtol alloc ...
+aurora-vtol bridge ...
 ```
 
 Use `alloc` for control, maneuver, mission, and engineering workflows.
 Use `bridge` for replay, export, Mission Planner, and SITL workflows.
 
-## `aurora alloc` commands
+## `aurora-vtol alloc` commands
 
-### `aurora alloc assess`
+### `aurora-vtol alloc assess`
 
 Assess a trace against engineering criteria.
 
@@ -34,13 +34,13 @@ Use this when you want a structured verdict on maneuver or mission quality inste
 Example:
 
 ```bash
-uv run aurora alloc assess \
+uv run aurora-vtol alloc assess \
   --trace runs/trace_coordinates_medium.json \
   --format text \
   --out runs/trace_coordinates_medium_assessment.txt
 ```
 
-### `aurora alloc demo`
+### `aurora-vtol alloc demo`
 
 Run a basic allocator demo.
 
@@ -49,10 +49,10 @@ Use this for quick radial or yaw-aware allocation sanity checks.
 Example:
 
 ```bash
-uv run aurora alloc demo --version v2 --dir-deg 90 --fxy 3000 --mz-nm 0
+uv run aurora-vtol alloc demo --version v2 --dir-deg 90 --fxy 3000 --mz-nm 0
 ```
 
-### `aurora alloc step`
+### `aurora-vtol alloc step`
 
 Run a step-style directional transition.
 
@@ -61,7 +61,7 @@ Use this for simple direction-change response studies without the full snap-stop
 Example:
 
 ```bash
-uv run aurora alloc step \
+uv run aurora-vtol alloc step \
   --dir-a-deg 0 \
   --dir-b-deg 180 \
   --fxy 3000 \
@@ -70,7 +70,7 @@ uv run aurora alloc step \
   --trace-out runs/trace_step.json
 ```
 
-### `aurora alloc coordinates`
+### `aurora-vtol alloc coordinates`
 
 Run a coordinate mission with optional presets, obstacles, and power-aware tuning.
 
@@ -79,20 +79,20 @@ Use this for mission-scale studies rather than isolated maneuvers.
 Examples:
 
 ```bash
-uv run aurora alloc coordinates \
+uv run aurora-vtol alloc coordinates \
   --preset medium \
   --trace-out runs/trace_coordinates_medium.json
 ```
 
 ```bash
-uv run aurora alloc coordinates \
+uv run aurora-vtol alloc coordinates \
   --preset medium \
   --power-safe \
   --continuous-power-kw 130 \
   --trace-out runs/trace_coordinates_power_safe.json
 ```
 
-### `aurora alloc power-sweep`
+### `aurora-vtol alloc power-sweep`
 
 Sweep plant assumptions such as continuous power, hover power, voltage, or resistance.
 
@@ -101,7 +101,7 @@ Use this to build propulsion and battery requirement tables.
 Example:
 
 ```bash
-uv run aurora alloc power-sweep \
+uv run aurora-vtol alloc power-sweep \
   --preset medium \
   --continuous-power-kw 125 \
   --continuous-power-kw 130 \
@@ -110,7 +110,7 @@ uv run aurora alloc power-sweep \
   --requirements-out runs/power_requirements_medium.md
 ```
 
-### `aurora alloc sizing-pack`
+### `aurora-vtol alloc sizing-pack`
 
 Generate a multi-preset sizing study.
 
@@ -119,14 +119,14 @@ Use this when you want one requirements pack across `medium`, `long`, and `very-
 Example:
 
 ```bash
-uv run aurora alloc sizing-pack \
+uv run aurora-vtol alloc sizing-pack \
   --continuous-power-kw 125 \
   --continuous-power-kw 130 \
   --continuous-power-kw 135 \
   --out-dir runs/power_sizing_pack
 ```
 
-### `aurora alloc fault-envelope`
+### `aurora-vtol alloc fault-envelope`
 
 Search fault cases and rank the worst ones.
 
@@ -135,13 +135,13 @@ Use this to discover which actuator or plenum faults are most limiting for a mis
 Example:
 
 ```bash
-uv run aurora alloc fault-envelope \
+uv run aurora-vtol alloc fault-envelope \
   --preset medium \
   --continuous-power-kw 125 \
   --out-dir runs/fault_envelope_medium
 ```
 
-### `aurora alloc fault-threshold`
+### `aurora-vtol alloc fault-threshold`
 
 Find the minimum viable continuous power for selected fault cases.
 
@@ -150,7 +150,7 @@ Use this after fault-envelope runs when you want a threshold study on specific w
 Example:
 
 ```bash
-uv run aurora alloc fault-threshold \
+uv run aurora-vtol alloc fault-threshold \
   --summary runs/fault_envelope_medium/summary.json \
   --case dead-fan-12-x0 \
   --continuous-power-kw 120 \
@@ -159,7 +159,7 @@ uv run aurora alloc fault-threshold \
   --out-dir runs/fault_threshold_medium
 ```
 
-### `aurora alloc fault-threshold-pack`
+### `aurora-vtol alloc fault-threshold-pack`
 
 Run the same threshold workflow across multiple envelope summaries.
 
@@ -168,7 +168,7 @@ Use this for multi-preset worst-case threshold summaries.
 Example:
 
 ```bash
-uv run aurora alloc fault-threshold-pack \
+uv run aurora-vtol alloc fault-threshold-pack \
   --summary runs/fault_envelope_medium/summary.json \
   --summary runs/fault_envelope_long/summary.json \
   --summary runs/fault_envelope_very_long/summary.json \
@@ -177,7 +177,7 @@ uv run aurora alloc fault-threshold-pack \
   --out-dir runs/fault_threshold_pack
 ```
 
-### `aurora alloc repel`
+### `aurora-vtol alloc repel`
 
 Run the repel-field scenario.
 
@@ -186,14 +186,14 @@ Use this when studying obstacle-like field avoidance or response timing.
 Example:
 
 ```bash
-uv run aurora alloc repel \
+uv run aurora-vtol alloc repel \
   --ox 30 --oy 0 \
   --radius-m 30 \
   --k 120 \
   --trace-out runs/trace_repel.json
 ```
 
-### `aurora alloc step-redirect`
+### `aurora-vtol alloc step-redirect`
 
 Run the UFO-style redirect profile that reorients the motion vector without forcing a full stop.
 
@@ -202,21 +202,21 @@ Use this for 45, 90, 135, and 180 degree redirect studies when you want fixed ya
 Examples:
 
 ```bash
-uv run aurora alloc step-redirect \
+uv run aurora-vtol alloc step-redirect \
   --dir-b-deg 90 \
   --maneuver-safe \
   --trace-out runs/trace_step_redirect_90.json
 ```
 
 ```bash
-uv run aurora alloc step-redirect \
+uv run aurora-vtol alloc step-redirect \
   --eco \
   --dir-b-deg 90 \
   --maneuver-safe \
   --trace-out runs/trace_step_redirect_90_eco.json
 ```
 
-### `aurora alloc step-snap`
+### `aurora-vtol alloc step-snap`
 
 Run the snap-stop profile.
 
@@ -225,7 +225,7 @@ Use this for hard brake, reversal, and snap-stop studies. Use `--eco` when you w
 Examples:
 
 ```bash
-uv run aurora alloc step-snap \
+uv run aurora-vtol alloc step-snap \
   --dir-a-deg 0 \
   --dir-b-deg 180 \
   --maneuver-safe \
@@ -233,7 +233,7 @@ uv run aurora alloc step-snap \
 ```
 
 ```bash
-uv run aurora alloc step-snap \
+uv run aurora-vtol alloc step-snap \
   --eco \
   --dir-a-deg 0 \
   --dir-b-deg 180 \
@@ -241,7 +241,7 @@ uv run aurora alloc step-snap \
   --trace-out runs/trace_step_snap_180_eco.json
 ```
 
-### `aurora alloc maneuver-pack`
+### `aurora-vtol alloc maneuver-pack`
 
 Run a batch of maneuver cases and produce summary artifacts.
 
@@ -250,34 +250,34 @@ Use this for comparing fault cases, angles, and maneuver profiles in one report.
 Examples:
 
 ```bash
-uv run aurora alloc maneuver-pack \
+uv run aurora-vtol alloc maneuver-pack \
   --profile step-redirect \
   --maneuver-safe \
   --out-dir runs/maneuver_pack_redirect_demo
 ```
 
 ```bash
-uv run aurora alloc maneuver-pack \
+uv run aurora-vtol alloc maneuver-pack \
   --profile step-snap-eco \
   --maneuver-safe \
   --out-dir runs/maneuver_pack_step_snap_eco_demo
 ```
 
-## `aurora bridge` commands
+## `aurora-vtol bridge` commands
 
-### `aurora bridge inspect`
+### `aurora-vtol bridge inspect`
 
 Inspect a bridge JSONL script and optionally generate an SVG preview.
 
 Example:
 
 ```bash
-uv run aurora bridge inspect \
+uv run aurora-vtol bridge inspect \
   --script runs/bridge_coordinates_long.jsonl \
   --svg-out runs/bridge_coordinates_long.svg
 ```
 
-### `aurora bridge mp-graphs`
+### `aurora-vtol bridge mp-graphs`
 
 Generate helper presets for Mission Planner graph selection.
 
@@ -286,31 +286,31 @@ Use this when replaying traces into Mission Planner and you want grouped enginee
 Example:
 
 ```bash
-uv run aurora bridge mp-graphs \
+uv run aurora-vtol bridge mp-graphs \
   --trace runs/trace_coordinates_power.json \
   --format text
 ```
 
-### `aurora bridge trace`
+### `aurora-vtol bridge trace`
 
 Convert a trace into bridge-ready outputs or stream it as live setpoints.
 
 Examples:
 
 ```bash
-uv run aurora bridge trace \
+uv run aurora-vtol bridge trace \
   --trace runs/trace_coordinates_medium.json \
   --jsonl-out runs/bridge_coordinates_medium.jsonl
 ```
 
 ```bash
-uv run aurora bridge trace \
+uv run aurora-vtol bridge trace \
   --trace runs/trace_coordinates_medium.json \
   --mavlink-out tcp:127.0.0.1:5771 \
   --no-dry-run
 ```
 
-### `aurora bridge mp`
+### `aurora-vtol bridge mp`
 
 Export a Mission Planner or QGroundControl waypoint mission.
 
@@ -319,14 +319,14 @@ Use this for GUI-driven AUTO-mode experiments rather than Aurora's continuous se
 Example:
 
 ```bash
-uv run aurora bridge mp \
+uv run aurora-vtol bridge mp \
   --trace runs/trace_coordinates_long.json \
   --out runs/mission_coordinates_long.waypoints \
   --home-lat -26.2041 \
   --home-lon 28.0473
 ```
 
-### `aurora bridge sitl`
+### `aurora-vtol bridge sitl`
 
 Execute a trace or script against ArduPilot SITL.
 
@@ -335,7 +335,7 @@ Use this when you want the autopilot in the loop and Mission Planner watching SI
 Example:
 
 ```bash
-uv run aurora bridge sitl \
+uv run aurora-vtol bridge sitl \
   --trace runs/trace_coordinates_long.json \
   --connect tcp:127.0.0.1:5760 \
   --execute \
@@ -344,7 +344,7 @@ uv run aurora bridge sitl \
 
 ## Direct Mission Planner replay
 
-Aurora also supports a direct replay path outside the `aurora bridge` CLI surface.
+Aurora also supports a direct replay path outside the `aurora-vtol bridge` CLI surface.
 
 Use [`scripts/trace_to_tlog.py`](../scripts/trace_to_tlog.py) when you want Mission Planner to observe a synthetic Aurora replay vehicle directly.
 
@@ -364,8 +364,8 @@ python scripts/trace_to_tlog.py \
 
 Use this rule of thumb:
 
-- `aurora alloc ...` for generating, tuning, and assessing motion
-- `aurora bridge ...` for exporting or streaming that motion into external tools
+- `aurora-vtol alloc ...` for generating, tuning, and assessing motion
+- `aurora-vtol bridge ...` for exporting or streaming that motion into external tools
 - `scripts/trace_to_tlog.py` for direct Mission Planner replay
 
 ## Notes on truth boundaries

@@ -19,7 +19,7 @@ Aurora traces are the portable time-series artifacts used for:
 - SITL-oriented workflows
 - offline diagnostics and plotting
 
-The trace writer itself is simple and lives in [`src/aurora_gates/allocator/trace.py`](../src/aurora_gates/allocator/trace.py):
+The trace writer itself is simple and lives in [`src/aurora_vtol/allocator/trace.py`](../src/aurora_vtol/allocator/trace.py):
 
 ```text
 {

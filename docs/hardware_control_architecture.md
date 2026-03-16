@@ -32,7 +32,7 @@ judged:
   the engineering result, not a presentation problem to hide.
 
 
-See also [engineering_review_checklist.md](/home/gabriel/projects/aurora-allocator-v4/docs/engineering_review_checklist.md) for the review standard we should apply to control, plant, and bridge changes.
+See also [engineering_review_checklist.md](engineering_review_checklist.md) for the review standard we should apply to control, plant, and bridge changes.
 
 ## Modeled Now
 
@@ -46,10 +46,10 @@ The current software stack models the vehicle at the force-allocation level.
 
 Relevant code:
 
-- [model.py](/home/gabriel/projects/aurora-allocator-v4/src/aurora_gates/allocator/model.py)
-- [allocate.py](/home/gabriel/projects/aurora-allocator-v4/src/aurora_gates/allocator/allocate.py)
-- [dynamics.py](/home/gabriel/projects/aurora-allocator-v4/src/aurora_gates/allocator/dynamics.py)
-- [sim.py](/home/gabriel/projects/aurora-allocator-v4/src/aurora_gates/allocator/sim.py)
+- [model.py](../src/aurora_vtol/allocator/model.py)
+- [allocate.py](../src/aurora_vtol/allocator/allocate.py)
+- [dynamics.py](../src/aurora_vtol/allocator/dynamics.py)
+- [sim.py](../src/aurora_vtol/allocator/sim.py)
 
 ### Flaps / Vector Vanes
 
