@@ -1,132 +1,159 @@
-# Aurora Allocator V1–V4 (VS Code / uv)
+﻿# Aurora Allocator V4+
 
-This project contains the Project Aurora "Allocator" prototypes up to V4:
-- V1: cosine flap distribution (translation)
-- V2: adds tangential swirl ring (yaw-moment trim channel)
-- V3: actuator rate limits + plenum lag + step-response metrics
-- V4: repel-from-point field + fault injection + JSON trace export for dashboard replay
+Aurora is a software-first control, maneuver, and simulation stack for a 16-fan / 32-vane ring vehicle. The repository studies how guidance, vehicle control, control allocation, actuator dynamics, power limits, fault handling, and bridge tooling work together for a UFO-style VTOL concept.
 
-See [docs/hardware_control_architecture.md](/home/gabriel/projects/aurora-allocator-v4/docs/hardware_control_architecture.md) for the current software-to-hardware control mapping of the 16-fan / 32-vane concept.
-See [docs/engineering_review_checklist.md](/home/gabriel/projects/aurora-allocator-v4/docs/engineering_review_checklist.md) for the review standard we should apply to control, plant, power, and bridge changes.
+This project is best understood as a flight-control and validation stack, not yet a complete aircraft implementation. It is designed to answer questions like:
 
-## Setup (WSL recommended)
+- Can the craft generate lateral force while holding yaw?
+- How does the allocator behave under actuator faults or degraded plenum sectors?
+- How quickly can the vehicle redirect, repel, brake, and snap-stop?
+- How do power, thermal, and topology constraints affect achievable motion?
+- How can traces be replayed into Mission Planner or streamed into SITL-oriented workflows?
+
+## What the repo currently includes
+
+- A typed interface layer in [`src/aurora_gates/icd.py`](src/aurora_gates/icd.py)
+- A vehicle controller layer in [`src/aurora_gates/vehicle_controller.py`](src/aurora_gates/vehicle_controller.py)
+- A topology layer in [`src/aurora_gates/topology.py`](src/aurora_gates/topology.py)
+- A fault-aware allocator core in [`src/aurora_gates/allocator/allocate.py`](src/aurora_gates/allocator/allocate.py)
+- Dynamics and fault models in [`src/aurora_gates/allocator/dynamics.py`](src/aurora_gates/allocator/dynamics.py) and [`src/aurora_gates/allocator/faults.py`](src/aurora_gates/allocator/faults.py)
+- Mission, plant, and power simulation in [`src/aurora_gates/allocator/sim.py`](src/aurora_gates/allocator/sim.py)
+- Engineering assessment and tuning helpers in [`src/aurora_gates/allocator/engineering.py`](src/aurora_gates/allocator/engineering.py)
+- Bridge, Mission Planner, and SITL tooling in [`src/aurora_gates/bridge.py`](src/aurora_gates/bridge.py) and [`scripts/trace_to_tlog.py`](scripts/trace_to_tlog.py)
+
+## High-level architecture
+
+```text
+Mission / Guidance
+        |
+        v
+Vehicle Controller
+        |
+        v
+Desired Wrench (Fx, Fy, Fz, Mz)
+        |
+        v
+Allocator
+        |
+        v
+Fan / Vane / Tangential Commands
+        |
+        v
+Actuator Dynamics + Faults + Plenum / Power Limits
+        |
+        v
+Plant / Mission / Engineering Assessment
+        |
+        v
+Trace Export + Replay + Bridge / SITL
+```
+
+## Repository layout
+
+```text
+src/aurora_gates/
+  cli.py
+  icd.py
+  topology.py
+  vehicle_controller.py
+  bridge.py
+
+  allocator/
+    model.py
+    allocate.py
+    dynamics.py
+    faults.py
+    field.py
+    sim.py
+    metrics.py
+    response.py
+    trace.py
+    engineering.py
+
+scripts/
+  trace_to_tlog.py
+```
+
+## Quick start
+
+### Setup
+
 ```bash
 uv venv
 uv sync
 uv run aurora --help
 ```
 
-## Run demos
-### V2 demo (translation + optional yaw moment)
+### Core allocator and maneuver demos
+
 ```bash
 uv run aurora alloc demo --version v2 --dir-deg 90 --fxy 3000 --mz-nm 0
-```
-
-### V3 step test (direction change without yaw)
-```bash
 uv run aurora alloc step --dir-a-deg 0 --dir-b-deg 180 --fxy 3000 --step-time-s 3 --total-s 8
-```
-
-### V4 repel test + export replay trace
-```bash
 uv run aurora alloc repel --ox 30 --oy 0 --radius-m 30 --k 120 --trace-out runs/trace_repel.json
+uv run aurora alloc step-redirect --dir-b-deg 90 --maneuver-safe --trace-out runs/trace_step_redirect_90.json
+uv run aurora alloc step-snap --dir-b-deg 180 --maneuver-safe --eco --trace-out runs/trace_step_snap_180_eco.json
 ```
 
-Fault examples:
-```bash
-uv run aurora alloc repel --stuck-flap-idx 7 --stuck-flap-alpha-deg 10 --trace-out runs/trace_fault_stuckflap.json
-uv run aurora alloc repel --dead-fan-group 3 --dead-fan-scale 0 --trace-out runs/trace_fault_deadfan.json
-uv run aurora alloc repel --plenum-sector-idx 12 --plenum-sector-scale 0.7 --trace-out runs/trace_fault_plenum.json
-```
-
-### Snappier configurations (new options)
-You can now adjust actuator and plenum dynamics directly from the CLI.  These
-help reduce latency and make the response feel more "instant":
+### Mission and engineering workflows
 
 ```bash
-# default values shown here for reference
---alpha-rate-deg-s 200.0     # flap rate limit (deg/s)
---plenum-tau-s 0.12          # plenum lag time constant (s)
+uv run aurora alloc coordinates --preset medium --power-safe --trace-out runs/trace_coordinates_medium.json
+uv run aurora alloc assess --trace runs/trace_coordinates_medium.json --format text
+uv run aurora alloc power-sweep --preset medium --continuous-power-kw 125 --continuous-power-kw 130
+uv run aurora alloc maneuver-pack --profile step-snap-eco --maneuver-safe --out-dir runs/maneuver_pack_step_snap_eco_demo
 ```
 
-### Step‑snap maneuver (V3)
-A new `step-snap` command performs the three‑phase gate D maneuver: build up
-motion in direction A, aggressively brake opposite velocity, and then snap into
-direction B. The headline metrics focus on how quickly the craft stops and
-reverses during the snap-stop phase.
+### Bridge and replay workflows
 
 ```bash
-uv run aurora alloc step-snap \
-  --dir-a-deg 0 --dir-b-deg 180 \
-  --fxy 2500 \
-  --step-time-s 3 \
-  --snap-stop-s 0.7 \
-  --brake-gain 1.6 \
-  --alpha-rate-deg-s 500 \
-  --plenum-tau-s 0.05 \
-  --total-s 9
+uv run aurora bridge inspect --script runs/bridge_coordinates_long.jsonl --svg-out runs/bridge_coordinates_long.svg
+uv run aurora bridge trace --trace runs/trace_coordinates_medium.json --jsonl-out runs/bridge_coordinates_medium.jsonl
+uv run aurora bridge sitl --help
+python scripts/trace_to_tlog.py --trace runs/trace_coordinates_medium.json --out listen:127.0.0.1:5770 --home-lat -26.2041 --home-lon 28.0473
 ```
 
-Key metrics to watch:
-* `t_to_speed_below_thr_s` – time until craft almost stops during snap
-* `snap_stop_distance_m` – how far it slides before stopping
-* `t_reversal_s` & `t90_dir_s` – reversal and realignment times
-* `peak_speed_mps` and yaw/track coupling remain available for context.
+## Documentation
 
+- [Architecture](docs/architecture.md)
+- [Module Reference](docs/module_reference.md)
+- [Engineering Notes](docs/engineering_notes.md)
+- [Command Reference](docs/command_reference.md)
+- [Topology](docs/topology.md)
+- [Fault Model](docs/fault_model.md)
+- [Trace Schema](docs/trace_schema.md)
+- [Scenario Guide](docs/scenario_guide.md)
+- [Limitations](docs/limitations.md)
+- [Interface Control Document](docs/icd.md)
+- [Bridge Workflows](docs/bridge_workflows.md)
+- [Hardware Control Architecture](docs/hardware_control_architecture.md)
+- [Engineering Review Checklist](docs/engineering_review_checklist.md)
 
-Example of a faster repel demo:
-```bash
-uv run aurora alloc repel --ox 40 --oy 0 --radius-m 30 --k 250 --init-vx 2 \
-    --total-s 12 --alpha-rate-deg-s 350 --plenum-tau-s 0.08 \
-    --trace-out runs/trace_repel_demo_fast.json
-```
+## What this repo proves today
 
-### Hard-wall entry (optional patch)
-If you prefer the field to feel like a **solid wall**, modify `repel_force_xy`
-in `src/aurora_gates/allocator/field.py` so the force is non-zero immediately
-upon crossing the radius. For example:
+The current codebase supports these software claims:
 
-```python
-pen = field.radius_m - d
-# Add a "kick" as soon as you enter the radius
-kick = 0.35 * field.fxy_max_n  # 35% of max immediately at boundary (tunable)
-mag = clamp(kick + field.k_n_per_m * pen, 0.0, field.fxy_max_n)
-```
+- 16-fan / 32-vane control is a meaningful software architecture, not just a diagram.
+- The controller and allocator can generate holonomic-style lateral maneuvers while holding yaw.
+- Maneuver feasibility can be studied under actuator, topology, power, thermal, and fault limits.
+- Degraded operation can be explored before hardware exists.
+- Traces can be exported into replay, Mission Planner, bridge, and SITL-oriented workflows.
 
-Rerunning with a stiffer field:
-```bash
-uv run aurora alloc repel --ox 40 --oy 0 --radius-m 30 --k 600 --fxy-max 8000 \
-    --init-vx 2 --total-s 12 --alpha-rate-deg-s 350 --plenum-tau-s 0.08 \
-    --trace-out runs/trace_repel_demo_wall.json
-```
-should produce a recede latency well under a second, giving a very abrupt
-rebound.
+## What it does not yet prove
 
+This repository does not yet validate:
 
-## Output
-- JSON results print to stdout
-- Traces export to `runs/*.json` (replay in your dashboard)
+- final mechanical packaging
+- final aerodynamic efficiency
+- exact duct and plenum geometry
+- exact ESC, actuator, and wiring layout
+- certified avionics and safety architecture
+- final CAD-accurate hardware implementation
 
-### Headline metrics
-The `repel` command now includes a couple of extra fields in the headline:
+## Recommended next engineering steps
 
-* `enter_radius_time_s` – when the craft first crossed into the  field radius
-* `response_time_s` – (legacy) first time speed changed by ≥0.3 m/s
-* `response_latency_s` – difference between enter and the above
-* `recede_time_s` – first moment radial velocity becomes positive (moving away)
-* `recede_latency_s` – latency based on the more physical “recede” metric
-
-The `recede_*` numbers give a more accurate “start of repel” indicator compared to
-the speed‑difference rule, and are the ones you’ll want to plot on the dashboard.
-
-In addition to the headline metrics, trace JSONs now record per‑segment data:
-* `hist.alpha_deg_32[t]` – list of 32 flap angles (degrees) at time step `t`
-* `hist.ft_tan_32[t]` – list of tangential efforts per segment (N)
-* `hist.fan_thrust_16[t]` – 16‑pair averaged fan thrusts (existing)
-
-These arrays enable ring‑visualization of flap deflections or 16‑fan thrust
-patterns in both repel and step‑snap traces.
-
-
-
-
+1. Freeze the hardware-facing fan-to-vane and plenum topology assumptions.
+2. Add geometry-aware effectiveness maps derived from the real vehicle layout.
+3. Formalize estimator and actuator-health publisher interfaces against the ICD.
+4. Separate central flight-computer logic from local actuator-node ownership.
+5. Define a CAD-facing control requirements interface.
+6. Add more hardware-oriented validation around timing, buses, and actuator feedback.
