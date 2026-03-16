@@ -117,6 +117,7 @@ python scripts/trace_to_tlog.py --trace runs/trace_coordinates_medium.json --out
 - [Architecture](docs/architecture.md)
 - [Module Reference](docs/module_reference.md)
 - [Engineering Notes](docs/engineering_notes.md)
+- [Current-State Repo Review](docs/repo_review_current_state.md)
 - [Command Reference](docs/command_reference.md)
 - [Topology](docs/topology.md)
 - [Effectiveness Map](docs/effectiveness_map.md)

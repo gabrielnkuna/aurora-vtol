@@ -7,6 +7,7 @@ Related docs:
 - [Architecture](architecture.md)
 - [Interface Control Document](icd.md)
 - [Bridge Workflows](bridge_workflows.md)
+- [Current-State Repo Review](repo_review_current_state.md)
 - [Hardware Control Architecture](hardware_control_architecture.md)
 - [Engineering Review Checklist](engineering_review_checklist.md)
 - [Scenario Guide](scenario_guide.md)
