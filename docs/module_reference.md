@@ -172,9 +172,19 @@ Mission and plant simulation.
 Responsibilities:
 
 - propagate vehicle state
-- run maneuver scenarios
+- run coordinate missions
 - apply safety and obstacle influences
 - record telemetry and outputs
+
+### `allocator/maneuver_scenarios.py`
+
+Maneuver scenario orchestration.
+
+Responsibilities:
+
+- run demo, step, step-snap, step-redirect, and repel scenarios
+- coordinate controller, allocator, actuator, and power-model loops during maneuvers
+- record maneuver-specific telemetry and summaries
 
 ### `allocator/power_system.py`
 

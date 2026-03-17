@@ -5,7 +5,7 @@ import numpy as np
 from aurora_vtol.allocator.dynamics import ActuatorLimits, PlenumModel
 from aurora_vtol.allocator.engineering import assess_trace
 from aurora_vtol.allocator.faults import FaultSpec
-from aurora_vtol.allocator.sim import run_step_redirect_v3, run_step_snap_v3, run_step_test_v3
+from aurora_vtol.allocator.maneuver_scenarios import run_step_redirect_v3, run_step_snap_v3, run_step_test_v3
 
 MANEUVER_IGNORED_WARNINGS = {
     'final mission position error exceeded 1.5x arrival radius',
