@@ -8,7 +8,7 @@ from .allocate import AllocationRequest, allocate_v1, allocate_v2
 from .dynamics import AllocatorState, ActuatorLimits, PlenumModel
 from .faults import FaultSpec
 from .field import RepelField, repel_force_xy
-from .metrics import yaw_track_coupling_mean_abs
+from .metrics import time_to_positive_target_projection_s, time_to_track_alignment_s, yaw_track_coupling_mean_abs
 from .maneuver_support import append_stateful_maneuver_history, build_maneuver_health, build_maneuver_state, build_stateful_maneuver_setup, build_turn_geometry, heading_error_deg, smoothstep_local, unit_or_default
 from .model import RingGeometry, net_force_and_yaw_moment, segment_angles_rad, thrust_vectors_body
 from .maneuver_execution import execute_maneuver_step
@@ -179,19 +179,17 @@ def run_step_test_v3(dir_deg_a: float = 0.0, dir_deg_b: float = 180.0, fxy_n: fl
     step_idx = int(step_time_s / sim.dt_s)
     step_t = float(t_arr[step_idx])
 
-    # direction of travel (deg)
-    track_deg = (np.degrees(np.arctan2(vy_arr, vx_arr)) + 360.0) % 360.0
     target_deg = (dir_deg_b + 360.0) % 360.0
-    def ang_err(a, b):
-        d = (a - b + 180.0) % 360.0 - 180.0
-        return abs(d)
 
     # t90_dir_s: first time track is within 20 deg of target AND speed > 0.5m/s
-    t90_dir = None
-    for i in range(step_idx, len(t_arr)):
-        if sp_arr[i] > 0.5 and heading_error_deg(track_deg[i], target_deg) <= 20.0:
-            t90_dir = float(t_arr[i] - step_t)
-            break
+    t90_dir = time_to_track_alignment_s(
+        t_arr,
+        vx_arr,
+        vy_arr,
+        sp_arr,
+        start_idx=step_idx,
+        target_deg=target_deg,
+    )
 
     # t_reversal_s: first time vx crosses 0 (for 0->180 step on X)
     t_reversal = None
@@ -502,8 +500,6 @@ def run_step_snap_v3(
     x_arr = np.array(hist["x"], float)
     y_arr = np.array(hist["y"], float)
 
-    # track angle deg
-    track_deg = (np.degrees(np.arctan2(vy_arr, vx_arr)) + 360.0) % 360.0
     target_deg = (dir_deg_b + 360.0) % 360.0
 
     step_t = float(t_arr[step_idx])
@@ -527,24 +523,24 @@ def run_step_snap_v3(
     dy = y_arr[stop_idx] - y_arr[step_idx]
     snap_stop_distance = float(math.hypot(dx, dy))
 
-    # 3) time to reversal (vx sign for 0->180 on X; general case uses dot with target dir)
-    # General: want velocity to have positive projection on target direction
-    tx = math.cos(math.radians(target_deg))
-    ty = math.sin(math.radians(target_deg))
-
-    t_reversal = None
-    for i in range(step_idx, len(t_arr)):
-        proj = vx_arr[i]*tx + vy_arr[i]*ty
-        if proj > 0.0:
-            t_reversal = float(t_arr[i] - step_t)
-            break
+    # 3) time to reversal (positive projection on the target direction)
+    t_reversal = time_to_positive_target_projection_s(
+        t_arr,
+        vx_arr,
+        vy_arr,
+        start_idx=step_idx,
+        target_deg=target_deg,
+    )
 
     # 4) time to align direction within 20 deg (and speed > 0.5)
-    t90_dir = None
-    for i in range(step_idx, len(t_arr)):
-        if sp_arr[i] > 0.5 and heading_error_deg(track_deg[i], target_deg) <= 20.0:
-            t90_dir = float(t_arr[i] - step_t)
-            break
+    t90_dir = time_to_track_alignment_s(
+        t_arr,
+        vx_arr,
+        vy_arr,
+        sp_arr,
+        start_idx=step_idx,
+        target_deg=target_deg,
+    )
 
     coupling = yaw_track_coupling_mean_abs(hist)
 
@@ -810,26 +806,27 @@ def run_step_redirect_v3(
     sp_arr = np.array(hist["speed"], float)
     x_arr = np.array(hist["x"], float)
     y_arr = np.array(hist["y"], float)
-    track_deg = (np.degrees(np.arctan2(vy_arr, vx_arr)) + 360.0) % 360.0
     target_deg = (dir_deg_b + 360.0) % 360.0
 
     step_t = float(t_arr[step_idx])
     redirect_end_t = float(t_arr[min(redirect_end_idx, len(t_arr)-1)])
 
-    tx = math.cos(math.radians(target_deg))
-    ty = math.sin(math.radians(target_deg))
-    t_reversal = None
-    for i in range(step_idx, len(t_arr)):
-        proj = vx_arr[i] * tx + vy_arr[i] * ty
-        if proj > 0.0:
-            t_reversal = float(t_arr[i] - step_t)
-            break
+    t_reversal = time_to_positive_target_projection_s(
+        t_arr,
+        vx_arr,
+        vy_arr,
+        start_idx=step_idx,
+        target_deg=target_deg,
+    )
 
-    t90_dir = None
-    for i in range(step_idx, len(t_arr)):
-        if sp_arr[i] > 0.5 and heading_error_deg(track_deg[i], target_deg) <= 20.0:
-            t90_dir = float(t_arr[i] - step_t)
-            break
+    t90_dir = time_to_track_alignment_s(
+        t_arr,
+        vx_arr,
+        vy_arr,
+        sp_arr,
+        start_idx=step_idx,
+        target_deg=target_deg,
+    )
 
     t_to_stop = None
     for i in range(step_idx, min(len(t_arr), redirect_end_idx + 1)):

@@ -272,6 +272,7 @@ Derived motion and coupling metrics.
 Responsibilities:
 
 - compute quality measures such as track / yaw coupling
+- provide shared track-angle, alignment-time, and reversal-time helpers for maneuver analysis
 - quantify maneuver behavior for engineering review
 
 ### `allocator/response.py`
