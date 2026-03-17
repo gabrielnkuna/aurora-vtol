@@ -184,8 +184,18 @@ Coordinate mission orchestration.
 Responsibilities:
 
 - run routed coordinate missions
-- apply safety, route-following, and budget-aware guidance shaping
+- coordinate the route, allocator, actuator, and power loops for mission execution
 - record mission telemetry and outputs
+
+### `allocator/coordinate_support.py`
+
+Pure coordinate-mission support helpers.
+
+Responsibilities:
+
+- advance routed subgoals and resolve active route geometry
+- apply budget-aware speed and altitude shaping
+- build mission histories and packaged mission outputs
 
 ### `allocator/sim.py`
 
