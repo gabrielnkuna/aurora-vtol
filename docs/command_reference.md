@@ -92,6 +92,26 @@ uv run aurora-vtol alloc coordinates \
   --trace-out runs/trace_coordinates_power_safe.json
 ```
 
+### `aurora-vtol alloc effectiveness-report`
+
+Materialize the current nominal effectiveness table and write a compact assumptions report.
+
+Use this when you want to inspect the hardware-facing authority assumptions directly instead of inferring them from source code and raw JSON assets.
+
+Example:
+
+```bash
+uv run aurora-vtol alloc effectiveness-report \
+  --out-dir runs/effectiveness_report_geometry_seed
+```
+
+This writes a small artifact pack, including:
+
+- `summary.json`
+- `summary.md`
+- `materialized_table.json`
+- `source_spec.json` when the source is a geometry seed
+
 ### `aurora-vtol alloc power-sweep`
 
 Sweep plant assumptions such as continuous power, hover power, voltage, or resistance.

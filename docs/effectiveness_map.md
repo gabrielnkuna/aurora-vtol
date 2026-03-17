@@ -106,6 +106,24 @@ In the current provisional geometry-seeded table, all three are unity. That mean
 
 In the current provisional table, it is effectively identity ownership.
 
+## CLI workflow
+
+Aurora now has a dedicated CLI workflow for inspecting the current nominal authority assumptions as artifacts instead of only code:
+
+```bash
+uv run aurora-vtol alloc effectiveness-report \
+  --out-dir runs/effectiveness_report_geometry_seed
+```
+
+That writes:
+
+- `summary.json`
+- `summary.md`
+- `materialized_table.json`
+- `source_spec.json` when the source is a geometry seed
+
+This workflow is meant to make the current mechanics-facing assumptions reviewable. It does not turn the current provisional geometry seed into validated hardware truth.
+
 ## How the allocator uses it today
 
 The allocator now uses the explicit table for nominal force evaluation in [`src/aurora_vtol/allocator/allocate.py`](../src/aurora_vtol/allocator/allocate.py).

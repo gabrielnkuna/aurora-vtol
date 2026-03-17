@@ -77,6 +77,16 @@ Responsibilities:
 - provide a stable software interface for hardware-facing authority maps
 - separate provisional nominal authority data from allocator math
 
+### `effectiveness_workflows.py`
+
+Engineering-facing workflow helpers for nominal authority artifacts.
+
+Responsibilities:
+
+- materialize a nominal effectiveness table from a geometry seed or existing table
+- summarize fan, plenum, and component-scale assumptions
+- write reviewable artifact packs for hardware-facing authority assumptions
+
 ### `vehicle_controller.py`
 
 Controller layer between guidance and allocation.

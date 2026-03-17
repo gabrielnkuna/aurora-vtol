@@ -264,6 +264,59 @@ def build_seeded_effectiveness_table(topology: RingActuatorTopology) -> NominalE
     )
 
 
+def geometry_seed_spec_to_payload(spec: GeometrySeedSpec) -> dict:
+    return {
+        'schema_version': str(spec.schema_version),
+        'spec_name': str(spec.spec_name),
+        'segment_count': int(spec.segment_count),
+        'fan_center_deg': spec.fan_center_deg.tolist(),
+        'fan_half_span_deg': spec.fan_half_span_deg.tolist(),
+        'fan_sigma_deg': spec.fan_sigma_deg.tolist(),
+        'plenum_center_deg': spec.plenum_center_deg.tolist(),
+        'plenum_half_span_deg': spec.plenum_half_span_deg.tolist(),
+        'plenum_sigma_deg': spec.plenum_sigma_deg.tolist(),
+        'axial_scale_by_segment': spec.axial_scale_by_segment.tolist(),
+        'radial_scale_by_segment': spec.radial_scale_by_segment.tolist(),
+        'tangential_scale_by_segment': spec.tangential_scale_by_segment.tolist(),
+        'provenance': str(spec.provenance),
+    }
+
+
+def effectiveness_table_to_payload(table: NominalEffectivenessTable) -> dict:
+    return {
+        'schema_version': str(table.schema_version),
+        'table_name': str(table.table_name),
+        'segment_count': int(table.segment_count),
+        'fan_count': int(table.fan_count),
+        'plenum_count': int(table.plenum_count),
+        'fan_segment_weights': table.fan_segment_weights.tolist(),
+        'plenum_segment_weights': table.plenum_segment_weights.tolist(),
+        'axial_scale_by_segment': table.axial_scale_by_segment.tolist(),
+        'radial_scale_by_segment': table.radial_scale_by_segment.tolist(),
+        'tangential_scale_by_segment': table.tangential_scale_by_segment.tolist(),
+        'provenance': str(table.provenance),
+    }
+
+
+def summarize_geometry_seed_spec(spec: GeometrySeedSpec) -> dict:
+    return {
+        'spec_name': str(spec.spec_name),
+        'schema_version': str(spec.schema_version),
+        'segment_count': int(spec.segment_count),
+        'fan_count': int(spec.fan_count),
+        'plenum_count': int(spec.plenum_count),
+        'provenance': str(spec.provenance),
+        'fan_half_span_deg_min': float(np.min(spec.fan_half_span_deg)) if spec.fan_count else 0.0,
+        'fan_half_span_deg_max': float(np.max(spec.fan_half_span_deg)) if spec.fan_count else 0.0,
+        'fan_sigma_deg_min': float(np.min(spec.fan_sigma_deg)) if spec.fan_count else 0.0,
+        'fan_sigma_deg_max': float(np.max(spec.fan_sigma_deg)) if spec.fan_count else 0.0,
+        'plenum_half_span_deg_min': float(np.min(spec.plenum_half_span_deg)) if spec.plenum_count else 0.0,
+        'plenum_half_span_deg_max': float(np.max(spec.plenum_half_span_deg)) if spec.plenum_count else 0.0,
+        'plenum_sigma_deg_min': float(np.min(spec.plenum_sigma_deg)) if spec.plenum_count else 0.0,
+        'plenum_sigma_deg_max': float(np.max(spec.plenum_sigma_deg)) if spec.plenum_count else 0.0,
+    }
+
+
 def summarize_effectiveness_table(table: NominalEffectivenessTable) -> dict:
     return {
         'table_name': str(table.table_name),
