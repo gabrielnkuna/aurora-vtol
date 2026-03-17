@@ -6,6 +6,7 @@ from aurora_vtol.allocator.coordinate_support import (
     build_coordinate_output,
     compute_desired_speed_mps,
     compute_target_altitude_m,
+    resolve_coordinate_arrival_state,
     resolve_route_goal,
 )
 from aurora_vtol.allocator.dynamics import ActuatorLimits, PlenumModel
@@ -42,6 +43,32 @@ class CoordinateSupportTests(unittest.TestCase):
             is_final_goal=True,
         )
         self.assertEqual(z_target_m, 2.0)
+
+    def test_resolve_coordinate_arrival_state_transitions_to_hold(self):
+        route_goal = resolve_route_goal(0.0, 0.0, [(0.0, 0.0), (1.0, 0.0)], 1)
+        arrival = resolve_coordinate_arrival_state(
+            route_goal=route_goal,
+            dist_to_goal_m=1.0,
+            arrival_radius_m=1.5,
+            dest_z_m=0.0,
+            z_m=0.0,
+            speed_mps=0.2,
+            t_s=3.0,
+            hold_start_s=None,
+            arrival_time_s=None,
+            fx_cmd=12.0,
+            fy_cmd=4.0,
+            command_fx_prev=12.0,
+            command_fy_prev=4.0,
+            descent_radius_m=18.0,
+            z_target_m=0.0,
+            active_safety=0.0,
+        )
+        self.assertTrue(arrival.arrived_now)
+        self.assertEqual(arrival.phase, "hold")
+        self.assertEqual(arrival.fx_cmd, 0.0)
+        self.assertEqual(arrival.fy_cmd, 0.0)
+        self.assertEqual(arrival.arrival_time_s, 3.0)
 
     def test_build_coordinate_output_includes_hardware_assumptions(self):
         hist = build_coordinate_history()

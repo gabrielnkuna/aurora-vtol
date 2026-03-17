@@ -195,6 +195,7 @@ Responsibilities:
 
 - advance routed subgoals and resolve active route geometry
 - apply budget-aware speed and altitude shaping
+- manage arrival/hold state and phase classification
 - build packaged mission outputs
 
 ### `allocator/coordinate_execution.py`

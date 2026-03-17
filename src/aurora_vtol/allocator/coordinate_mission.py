@@ -9,6 +9,7 @@ from .coordinate_support import (
     build_coordinate_output,
     classify_coordinate_phase,
     compute_coordinate_guidance_command,
+    resolve_coordinate_arrival_state,
     resolve_route_goal,
 )
 from .dynamics import AllocatorState, ActuatorLimits, PlenumModel
@@ -129,35 +130,31 @@ def run_coordinate_mission_v5(
         command_fy_prev = fy_cmd
         z_target_m = guidance.z_target_m
 
-        arrived_now = (
-            route_goal.is_final_goal
-            and dist_to_goal_m <= arrival_radius_m
-            and abs(st.z_m - dest_z_m) <= 0.5
-            and speed_mps <= 0.35
+        arrival = resolve_coordinate_arrival_state(
+            route_goal=route_goal,
+            dist_to_goal_m=dist_to_goal_m,
+            arrival_radius_m=arrival_radius_m,
+            dest_z_m=dest_z_m,
+            z_m=st.z_m,
+            speed_mps=speed_mps,
+            t_s=t,
+            hold_start_s=hold_start_s,
+            arrival_time_s=arrival_time_s,
+            fx_cmd=fx_cmd,
+            fy_cmd=fy_cmd,
+            command_fx_prev=command_fx_prev,
+            command_fy_prev=command_fy_prev,
+            descent_radius_m=descent_radius_m,
+            z_target_m=z_target_m,
+            active_safety=active_safety,
         )
-        if arrived_now:
-            fx_cmd = 0.0
-            fy_cmd = 0.0
-            command_fx_prev = 0.0
-            command_fy_prev = 0.0
-            if hold_start_s is None:
-                hold_start_s = t
-            if arrival_time_s is None:
-                arrival_time_s = t
-        else:
-            hold_start_s = None
-
-        if arrived_now:
-            phase = "hold"
-        else:
-            phase = classify_coordinate_phase(
-                route_goal,
-                dist_to_goal_m,
-                descent_radius_m,
-                z_target_m,
-                st.z_m,
-                active_safety,
-            )
+        arrival_time_s = arrival.arrival_time_s
+        hold_start_s = arrival.hold_start_s
+        fx_cmd = arrival.fx_cmd
+        fy_cmd = arrival.fy_cmd
+        command_fx_prev = arrival.command_fx_prev
+        command_fy_prev = arrival.command_fy_prev
+        phase = arrival.phase
 
         execution = execute_coordinate_step(
             st=st,

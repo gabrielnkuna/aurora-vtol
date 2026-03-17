@@ -36,6 +36,18 @@ class CoordinateGuidanceCommand:
     desired_vy_mps: float
 
 
+@dataclass(frozen=True)
+class CoordinateArrivalState:
+    arrived_now: bool
+    arrival_time_s: float | None
+    hold_start_s: float | None
+    fx_cmd: float
+    fy_cmd: float
+    command_fx_prev: float
+    command_fy_prev: float
+    phase: str
+
+
 def build_coordinate_history() -> dict[str, list]:
     return {
         "t": [], "x": [], "y": [], "z": [], "vx": [], "vy": [], "vz": [], "speed": [],
@@ -281,6 +293,63 @@ def compute_coordinate_guidance_command(
         desired_vx_mps=desired_vx_mps,
         desired_vy_mps=desired_vy_mps,
     )
+
+def resolve_coordinate_arrival_state(
+    *,
+    route_goal: CoordinateRouteGoal,
+    dist_to_goal_m: float,
+    arrival_radius_m: float,
+    dest_z_m: float,
+    z_m: float,
+    speed_mps: float,
+    t_s: float,
+    hold_start_s: float | None,
+    arrival_time_s: float | None,
+    fx_cmd: float,
+    fy_cmd: float,
+    command_fx_prev: float,
+    command_fy_prev: float,
+    descent_radius_m: float,
+    z_target_m: float,
+    active_safety: float,
+) -> CoordinateArrivalState:
+    arrived_now = (
+        route_goal.is_final_goal
+        and dist_to_goal_m <= arrival_radius_m
+        and abs(z_m - dest_z_m) <= 0.5
+        and speed_mps <= 0.35
+    )
+    if arrived_now:
+        fx_cmd = 0.0
+        fy_cmd = 0.0
+        command_fx_prev = 0.0
+        command_fy_prev = 0.0
+        if hold_start_s is None:
+            hold_start_s = t_s
+        if arrival_time_s is None:
+            arrival_time_s = t_s
+        phase = "hold"
+    else:
+        hold_start_s = None
+        phase = classify_coordinate_phase(
+            route_goal,
+            dist_to_goal_m,
+            descent_radius_m,
+            z_target_m,
+            z_m,
+            active_safety,
+        )
+    return CoordinateArrivalState(
+        arrived_now=arrived_now,
+        arrival_time_s=arrival_time_s,
+        hold_start_s=hold_start_s,
+        fx_cmd=fx_cmd,
+        fy_cmd=fy_cmd,
+        command_fx_prev=command_fx_prev,
+        command_fy_prev=command_fy_prev,
+        phase=phase,
+    )
+
 
 def classify_coordinate_phase(
     route_goal: CoordinateRouteGoal,
