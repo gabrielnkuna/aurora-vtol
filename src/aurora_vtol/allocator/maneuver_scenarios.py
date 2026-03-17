@@ -9,14 +9,15 @@ from .dynamics import AllocatorState, ActuatorLimits, PlenumModel
 from .faults import FaultSpec
 from .field import RepelField, repel_force_xy
 from .metrics import yaw_track_coupling_mean_abs
+from .maneuver_support import build_stateful_maneuver_setup, build_turn_geometry, heading_error_deg, smoothstep_local, unit_or_default
 from .model import RingGeometry, net_force_and_yaw_moment, segment_angles_rad, thrust_vectors_body
 from .maneuver_execution import execute_maneuver_step
-from .power_system import PowerSystemParams, apply_power_system, guidance_force_budget, init_hover_power_state
+from .power_system import PowerSystemParams, apply_power_system, fault_motion_guard, guidance_force_budget, init_hover_power_state
 from .response import compute_step_metrics
 from .sim_runtime import SimParams, SimState, append_engineering_telemetry, clip_force_xy, rate_limit_xy_force, step_vehicle
 from ..effectiveness import effectiveness_table_for_topology, hardware_assumptions_payload
-from ..icd import ActuatorHealthState, EstimatedVehicleState, RedirectTarget
 from ..topology import default_ring_topology
+from ..icd import ActuatorHealthState, EstimatedVehicleState, RedirectTarget
 from ..vehicle_controller import command_directional_force, track_redirect_velocity, track_step_snap_brake, track_step_snap_reverse
 
 def run_demo(dir_deg: float, fxy_n: float, duration_s: float, yaw_hold_deg: float = 0.0, mz_nm: float = 0.0, version: str = "v2", geom: RingGeometry | None = None, sim: SimParams | None = None):
@@ -92,22 +93,31 @@ def run_demo(dir_deg: float, fxy_n: float, duration_s: float, yaw_hold_deg: floa
     return hist
 
 def run_step_test_v3(dir_deg_a: float = 0.0, dir_deg_b: float = 180.0, fxy_n: float = 3000.0, step_time_s: float = 3.0, total_s: float = 8.0, yaw_hold_deg: float = 0.0, mz_nm: float = 0.0, version_note: str = "v3", geom=None, sim=None, lim: ActuatorLimits | None = None, pl: PlenumModel | None = None, fault: FaultSpec | None = None):
-    geom = geom or RingGeometry()
-    sim = sim or SimParams()
-    power = PowerSystemParams()
-    power_state = init_hover_power_state(power, geom, sim)
-    lim = lim or ActuatorLimits()
-    pl = pl or PlenumModel()
-    fault = fault or FaultSpec()
-    st = SimState(yaw_deg=yaw_hold_deg)
-    state = AllocatorState.init(geom.n_segments)
+    setup = build_stateful_maneuver_setup(
+        total_s=total_s,
+        yaw_hold_deg=yaw_hold_deg,
+        geom=geom,
+        sim=sim,
+        lim=lim,
+        pl=pl,
+        fault=fault,
+    )
+    geom = setup.geom
+    sim = setup.sim
+    power = setup.power
+    power_state = setup.power_state
+    lim = setup.lim
+    pl = setup.pl
+    fault = setup.fault
+    st = setup.st
+    state = setup.allocator_state
 
-    steps = int(total_s / sim.dt_s)
+    steps = setup.steps
     step_k = int(step_time_s / sim.dt_s)
-    theta = segment_angles_rad(geom.n_segments)
-    topology = default_ring_topology(geom.n_segments)
-    effectiveness = effectiveness_table_for_topology(topology)
-    fz_cmd = sim.mass_kg * sim.gravity
+    theta = setup.theta_rad
+    topology = setup.topology
+    effectiveness = setup.effectiveness
+    fz_cmd = setup.fz_cmd
 
     hist = {"t": [], "x": [], "y": [], "z": [], "vx": [], "vy": [], "vz": [], "yaw_deg": [], "yaw_rate_deg_s": [], "mz_est": [], "alpha_deg_rms": [], "ft_tan_rms": [], "speed": [], "cmd_dir_deg": [], "alpha_deg_32": [], "ft_tan_32": [], "fan_thrust_16": []}
 
@@ -179,7 +189,7 @@ def run_step_test_v3(dir_deg_a: float = 0.0, dir_deg_b: float = 180.0, fxy_n: fl
     # t90_dir_s: first time track is within 20 deg of target AND speed > 0.5m/s
     t90_dir = None
     for i in range(step_idx, len(t_arr)):
-        if sp_arr[i] > 0.5 and ang_err(track_deg[i], target_deg) <= 20.0:
+        if sp_arr[i] > 0.5 and heading_error_deg(track_deg[i], target_deg) <= 20.0:
             t90_dir = float(t_arr[i] - step_t)
             break
 
@@ -232,25 +242,33 @@ def run_step_snap_v3(
 
     Metrics focus on "UFO-like" abrupt stop + reverse without yaw.
     """
-    geom = geom or RingGeometry()
-    sim = sim or SimParams()
-    power = PowerSystemParams()
-    power_state = init_hover_power_state(power, geom, sim)
-    lim = lim or ActuatorLimits()
-    pl = pl or PlenumModel()
-    fault = fault or FaultSpec()
+    setup = build_stateful_maneuver_setup(
+        total_s=total_s,
+        yaw_hold_deg=yaw_hold_deg,
+        geom=geom,
+        sim=sim,
+        lim=lim,
+        pl=pl,
+        fault=fault,
+    )
+    geom = setup.geom
+    sim = setup.sim
+    power = setup.power
+    power_state = setup.power_state
+    lim = setup.lim
+    pl = setup.pl
+    fault = setup.fault
+    st = setup.st
+    state = setup.allocator_state
 
-    st = SimState(yaw_deg=yaw_hold_deg)
-    state = AllocatorState.init(geom.n_segments)
-
-    steps = int(total_s / sim.dt_s)
+    steps = setup.steps
     step_idx = int(step_time_s / sim.dt_s)
     snap_end_idx = int((step_time_s + snap_stop_s) / sim.dt_s)
 
-    theta = segment_angles_rad(geom.n_segments)
-    topology = default_ring_topology(geom.n_segments)
-    effectiveness = effectiveness_table_for_topology(topology)
-    fz_cmd = sim.mass_kg * sim.gravity
+    theta = setup.theta_rad
+    topology = setup.topology
+    effectiveness = setup.effectiveness
+    fz_cmd = setup.fz_cmd
 
     hist = {
         "t": [], "x": [], "y": [], "z": [], "vx": [], "vy": [], "vz": [], "speed": [],
@@ -264,27 +282,11 @@ def run_step_snap_v3(
         "continuous_power_ratio": [], "flap_usage_ratio": []
     }
 
-    # helpers
-    def ang_err(a, b):
-        d = (a - b + 180.0) % 360.0 - 180.0
-        return abs(d)
-
-    def smoothstep_local(u: float) -> float:
-        u = max(0.0, min(1.0, float(u)))
-        return u * u * (3.0 - 2.0 * u)
-
-    def unit_or_default(x: float, y: float, default_xy: tuple[float, float]) -> tuple[float, float]:
-        mag = math.hypot(x, y)
-        if mag < 1e-6:
-            return default_xy
-        return (x / mag, y / mag)
-
-    target_dir_rad = math.radians(dir_deg_b)
-    target_unit = (math.cos(target_dir_rad), math.sin(target_dir_rad))
-    nominal_brake_dir_deg = (dir_deg_a + 180.0) % 360.0
-    nominal_brake_rad = math.radians(nominal_brake_dir_deg)
-    nominal_brake_unit = (math.cos(nominal_brake_rad), math.sin(nominal_brake_rad))
-    redirect_sep_deg = ang_err(nominal_brake_dir_deg, dir_deg_b)
+    turn = build_turn_geometry(dir_deg_a, dir_deg_b)
+    target_unit = turn.target_unit
+    nominal_brake_dir_deg = turn.nominal_brake_dir_deg
+    nominal_brake_unit = turn.nominal_brake_unit
+    redirect_sep_deg = heading_error_deg(nominal_brake_dir_deg, dir_deg_b)
     turn_ratio = redirect_sep_deg / 180.0
     if redirect_hold_frac < 0.0:
         hold_frac = float(np.clip(0.65 + 0.35 * turn_ratio, 0.55, 0.98))
@@ -563,7 +565,7 @@ def run_step_snap_v3(
     # 4) time to align direction within 20 deg (and speed > 0.5)
     t90_dir = None
     for i in range(step_idx, len(t_arr)):
-        if sp_arr[i] > 0.5 and ang_err(track_deg[i], target_deg) <= 20.0:
+        if sp_arr[i] > 0.5 and heading_error_deg(track_deg[i], target_deg) <= 20.0:
             t90_dir = float(t_arr[i] - step_t)
             break
 
@@ -653,25 +655,33 @@ def run_step_redirect_v3(
 
     This better matches a holonomic UFO craft for 45/90-degree sidestep redirects.
     """
-    geom = geom or RingGeometry()
-    sim = sim or SimParams()
-    power = PowerSystemParams()
-    power_state = init_hover_power_state(power, geom, sim)
-    lim = lim or ActuatorLimits()
-    pl = pl or PlenumModel()
-    fault = fault or FaultSpec()
+    setup = build_stateful_maneuver_setup(
+        total_s=total_s,
+        yaw_hold_deg=yaw_hold_deg,
+        geom=geom,
+        sim=sim,
+        lim=lim,
+        pl=pl,
+        fault=fault,
+    )
+    geom = setup.geom
+    sim = setup.sim
+    power = setup.power
+    power_state = setup.power_state
+    lim = setup.lim
+    pl = setup.pl
+    fault = setup.fault
+    st = setup.st
+    state = setup.allocator_state
 
-    st = SimState(yaw_deg=yaw_hold_deg)
-    state = AllocatorState.init(geom.n_segments)
-
-    steps = int(total_s / sim.dt_s)
+    steps = setup.steps
     step_idx = int(step_time_s / sim.dt_s)
     redirect_end_idx = int((step_time_s + redirect_time_s) / sim.dt_s)
 
-    theta = segment_angles_rad(geom.n_segments)
-    topology = default_ring_topology(geom.n_segments)
-    effectiveness = effectiveness_table_for_topology(topology)
-    fz_cmd = sim.mass_kg * sim.gravity
+    theta = setup.theta_rad
+    topology = setup.topology
+    effectiveness = setup.effectiveness
+    fz_cmd = setup.fz_cmd
 
     hist = {
         "t": [], "x": [], "y": [], "z": [], "vx": [], "vy": [], "vz": [], "speed": [],
@@ -680,24 +690,11 @@ def run_step_redirect_v3(
         "cmd_phase": [], "cmd_dir_deg": [], "fx_cmd": [], "fy_cmd": []
     }
 
-    def ang_err(a, b):
-        d = (a - b + 180.0) % 360.0 - 180.0
-        return abs(d)
-
-    def smoothstep_local(u: float) -> float:
-        u = max(0.0, min(1.0, float(u)))
-        return u * u * (3.0 - 2.0 * u)
-
-    def unit_or_default(x: float, y: float, default_xy: tuple[float, float]) -> tuple[float, float]:
-        mag = math.hypot(x, y)
-        if mag < 1e-6:
-            return default_xy
-        return (x / mag, y / mag)
-
-    start_unit = (math.cos(math.radians(dir_deg_a)), math.sin(math.radians(dir_deg_a)))
-    target_unit = (math.cos(math.radians(dir_deg_b)), math.sin(math.radians(dir_deg_b)))
-    redirect_sep_deg = ang_err(dir_deg_a, dir_deg_b)
-    turn_ratio = redirect_sep_deg / 180.0
+    turn = build_turn_geometry(dir_deg_a, dir_deg_b)
+    start_unit = turn.start_unit
+    target_unit = turn.target_unit
+    redirect_sep_deg = turn.separation_deg
+    turn_ratio = turn.turn_ratio
     redirect_steps = max(1, redirect_end_idx - step_idx)
     settle_steps = max(1, int((0.60 + 0.50 * turn_ratio) / sim.dt_s))
     step_speed_ref = 0.0
@@ -877,7 +874,7 @@ def run_step_redirect_v3(
 
     t90_dir = None
     for i in range(step_idx, len(t_arr)):
-        if sp_arr[i] > 0.5 and ang_err(track_deg[i], target_deg) <= 20.0:
+        if sp_arr[i] > 0.5 and heading_error_deg(track_deg[i], target_deg) <= 20.0:
             t90_dir = float(t_arr[i] - step_t)
             break
 
@@ -953,23 +950,36 @@ def run_step_redirect_v3(
 
 def run_repel_test_v4(obstacle_x_m: float = 30.0, obstacle_y_m: float = 0.0, initial_x_m: float = 0.0, initial_y_m: float = 0.0, initial_vx_mps: float = 1.0, initial_vy_mps: float = 0.0, yaw_hold_deg: float = 0.0, total_s: float = 12.0, mz_nm: float = 0.0,
                       field: RepelField | None = None, fault: FaultSpec | None = None, trace_out: str | None = None, geom=None, sim=None, lim: ActuatorLimits | None = None, pl: PlenumModel | None = None):
-    geom = geom or RingGeometry()
-    sim = sim or SimParams()
-    power = PowerSystemParams()
-    power_state = init_hover_power_state(power, geom, sim)
-    lim = lim or ActuatorLimits()
-    pl = pl or PlenumModel()
+    setup = build_stateful_maneuver_setup(
+        total_s=total_s,
+        yaw_hold_deg=yaw_hold_deg,
+        geom=geom,
+        sim=sim,
+        lim=lim,
+        pl=pl,
+        fault=fault,
+    )
+    geom = setup.geom
+    sim = setup.sim
+    power = setup.power
+    power_state = setup.power_state
+    lim = setup.lim
+    pl = setup.pl
+    fault = setup.fault
     field = field or RepelField()
-    fault = fault or FaultSpec()
 
-    st = SimState(x_m=initial_x_m, y_m=initial_y_m, vx_mps=initial_vx_mps, vy_mps=initial_vy_mps, yaw_deg=yaw_hold_deg)
-    state = AllocatorState.init(geom.n_segments)
+    st = setup.st
+    st.x_m = initial_x_m
+    st.y_m = initial_y_m
+    st.vx_mps = initial_vx_mps
+    st.vy_mps = initial_vy_mps
+    state = setup.allocator_state
 
-    steps = int(total_s / sim.dt_s)
-    fz_cmd = sim.mass_kg * sim.gravity
-    theta = segment_angles_rad(geom.n_segments)
-    topology = default_ring_topology(geom.n_segments)
-    effectiveness = effectiveness_table_for_topology(topology)
+    steps = setup.steps
+    fz_cmd = setup.fz_cmd
+    theta = setup.theta_rad
+    topology = setup.topology
+    effectiveness = setup.effectiveness
 
     hist = {"t": [], "x": [], "y": [], "z": [], "vx": [], "vy": [], "vz": [], "speed": [], "yaw_deg": [], "yaw_rate_deg_s": [], "fx_cmd": [], "fy_cmd": [], "dist_to_obstacle": [], "mz_est": [], "alpha_deg_rms": [], "ft_tan_rms": [], "alpha_deg_32": [], "ft_tan_32": [], "faults": [], "fan_thrust_16": []}
 

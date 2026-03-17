@@ -233,6 +233,16 @@ Responsibilities:
 - evaluate achieved forces and propagate vehicle state during stateful maneuvers
 - keep stateful maneuver execution logic consistent across step, snap, redirect, and repel paths
 
+### `allocator/maneuver_support.py`
+
+Shared maneuver setup and shaping helpers.
+
+Responsibilities:
+
+- initialize common stateful maneuver defaults and topology/effectiveness state
+- provide reusable turn-geometry helpers for redirect and snap maneuvers
+- centralize small maneuver math helpers that should not live inside individual scenarios
+
 ### `allocator/power_system.py`
 
 Electrical, burst-power, thermal, and motion-budget modeling.
