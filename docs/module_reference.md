@@ -195,7 +195,17 @@ Responsibilities:
 
 - advance routed subgoals and resolve active route geometry
 - apply budget-aware speed and altitude shaping
-- build mission histories and packaged mission outputs
+- build packaged mission outputs
+
+### `allocator/coordinate_execution.py`
+
+Coordinate mission execution helpers.
+
+Responsibilities:
+
+- apply allocation, faults, actuator limits, plenum lag, and power effects for one mission step
+- evaluate achieved forces and propagate the vehicle state
+- append per-step mission telemetry and engineering history
 
 ### `allocator/sim.py`
 
