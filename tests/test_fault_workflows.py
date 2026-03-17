@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aurora_vtol.allocator.sim import PowerSystemParams
+from aurora_vtol.allocator.power_system import PowerSystemParams
 from aurora_vtol.fault_workflows import _fault_envelope_manifest, build_fault_envelope_report, load_fault_threshold_cases, resolve_fault_case, run_fault_envelope_report, run_fault_threshold_pack_report, run_fault_threshold_report, select_fault_cases
 
 

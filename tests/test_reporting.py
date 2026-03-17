@@ -1,6 +1,6 @@
 import unittest
 
-from aurora_vtol.allocator.sim import PowerSystemParams
+from aurora_vtol.allocator.power_system import PowerSystemParams
 from aurora_vtol.reporting import (
     infer_requirements_table_format,
     render_fault_envelope_table,

@@ -50,6 +50,7 @@ Relevant code:
 - [allocate.py](../src/aurora_vtol/allocator/allocate.py)
 - [dynamics.py](../src/aurora_vtol/allocator/dynamics.py)
 - [sim.py](../src/aurora_vtol/allocator/sim.py)
+- [power_system.py](../src/aurora_vtol/allocator/power_system.py)
 
 ### Flaps / Vector Vanes
 

@@ -22,7 +22,8 @@ from aurora_vtol.allocator.engineering import assess_trace, render_assessment, t
 from aurora_vtol.bridge import build_qgc_wpl_mission, build_setpoint_script, inspect_script, load_script_jsonl, load_script_jsonl_metadata, load_trace_json, script_metadata_from_trace_meta, stream_script_ardupilot_sitl, stream_script_mavlink, summarize_qgc_wpl_mission, summarize_script, summarize_setpoints, write_qgc_wpl_mission, write_script_jsonl, write_script_svg
 
 from aurora_vtol.allocator.mission_planning import MissionObstacle
-from aurora_vtol.allocator.sim import PowerSystemParams, run_coordinate_mission_v5, run_demo, run_step_redirect_v3, run_step_test_v3, run_repel_test_v4, run_step_snap_v3
+from aurora_vtol.allocator.power_system import PowerSystemParams
+from aurora_vtol.allocator.sim import run_coordinate_mission_v5, run_demo, run_step_redirect_v3, run_step_test_v3, run_repel_test_v4, run_step_snap_v3
 
 from aurora_vtol.allocator.dynamics import ActuatorLimits, PlenumModel
 

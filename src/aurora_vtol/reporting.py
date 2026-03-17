@@ -4,7 +4,7 @@ import csv
 import io
 from pathlib import Path
 
-from aurora_vtol.allocator.sim import PowerSystemParams
+from aurora_vtol.allocator.power_system import PowerSystemParams
 
 
 REQUIREMENTS_TABLE_COLUMNS = [

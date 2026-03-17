@@ -5,7 +5,7 @@ from pathlib import Path
 
 from aurora_vtol.allocator.dynamics import ActuatorLimits, PlenumModel
 from aurora_vtol.allocator.faults import FaultSpec
-from aurora_vtol.allocator.sim import PowerSystemParams
+from aurora_vtol.allocator.power_system import PowerSystemParams
 from aurora_vtol.study_workflows import (
     _normalize_required_status,
     _status_meets_threshold,

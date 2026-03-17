@@ -124,7 +124,7 @@ Representative responsibilities:
 - maneuver scoring and engineering telemetry
 - trace export
 
-The main implementation is in [`src/aurora_vtol/allocator/sim.py`](../src/aurora_vtol/allocator/sim.py) with assessment in [`src/aurora_vtol/allocator/engineering.py`](../src/aurora_vtol/allocator/engineering.py).
+The main implementation is split between [`src/aurora_vtol/allocator/sim.py`](../src/aurora_vtol/allocator/sim.py) for mission and plant flow, [`src/aurora_vtol/allocator/power_system.py`](../src/aurora_vtol/allocator/power_system.py) for the electrical/burst/thermal model, and [`src/aurora_vtol/allocator/engineering.py`](../src/aurora_vtol/allocator/engineering.py) for assessment.
 
 ### 2.6 Bridge / Replay / SITL
 

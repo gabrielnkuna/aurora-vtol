@@ -10,7 +10,8 @@ from aurora_vtol.allocator.dynamics import ActuatorLimits, PlenumModel
 from aurora_vtol.allocator.engineering import tune_coordinate_mission
 from aurora_vtol.allocator.faults import FaultSpec
 from aurora_vtol.allocator.model import RingGeometry
-from aurora_vtol.allocator.sim import MissionObstacle, PowerSystemParams
+from aurora_vtol.allocator.mission_planning import MissionObstacle
+from aurora_vtol.allocator.power_system import PowerSystemParams
 from aurora_vtol.allocator.trace import save_trace_json
 from aurora_vtol.reporting import render_fault_envelope_table, render_fault_threshold_pack_table, render_fault_threshold_table, render_requirements_table, summarize_power_params
 from aurora_vtol.study_workflows import _fault_status_rank, _normalize_required_status, build_coordinate_mission_kwargs, build_power_params, build_power_sweep_report_for_fault, write_power_sweep_outputs

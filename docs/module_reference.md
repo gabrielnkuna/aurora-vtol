@@ -167,15 +167,25 @@ Responsibilities:
 
 ### `allocator/sim.py`
 
-Mission, plant, and power simulation.
+Mission and plant simulation.
 
 Responsibilities:
 
 - propagate vehicle state
 - run maneuver scenarios
 - apply safety and obstacle influences
-- estimate battery, burst-power, and thermal limitations
 - record telemetry and outputs
+
+### `allocator/power_system.py`
+
+Electrical, burst-power, thermal, and motion-budget modeling.
+
+Responsibilities:
+
+- define `PowerSystemParams` and `PowerSystemState`
+- estimate battery, burst-power, and thermal limitations
+- compute motion guard budgets from power/fault state
+- apply supply, spool, burst, and thermal effects to thrust
 
 Representative scenario families:
 

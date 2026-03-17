@@ -10,7 +10,8 @@ import typer
 from aurora_vtol.allocator.dynamics import ActuatorLimits, PlenumModel
 from aurora_vtol.allocator.engineering import tune_coordinate_mission
 from aurora_vtol.allocator.faults import FaultSpec
-from aurora_vtol.allocator.sim import MissionObstacle, PowerSystemParams
+from aurora_vtol.allocator.mission_planning import MissionObstacle
+from aurora_vtol.allocator.power_system import PowerSystemParams
 from aurora_vtol.reporting import infer_requirements_table_format, render_requirements_table, summarize_power_params
 
 
