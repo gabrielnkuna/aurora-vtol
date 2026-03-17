@@ -9,7 +9,7 @@ from .dynamics import AllocatorState, ActuatorLimits, PlenumModel
 from .faults import FaultSpec
 from .field import RepelField, repel_force_xy
 from .metrics import yaw_track_coupling_mean_abs
-from .maneuver_support import build_stateful_maneuver_setup, build_turn_geometry, heading_error_deg, smoothstep_local, unit_or_default
+from .maneuver_support import append_stateful_maneuver_history, build_maneuver_health, build_maneuver_state, build_stateful_maneuver_setup, build_turn_geometry, heading_error_deg, smoothstep_local, unit_or_default
 from .model import RingGeometry, net_force_and_yaw_moment, segment_angles_rad, thrust_vectors_body
 from .maneuver_execution import execute_maneuver_step
 from .power_system import PowerSystemParams, apply_power_system, fault_motion_guard, guidance_force_budget, init_hover_power_state
@@ -17,7 +17,7 @@ from .response import compute_step_metrics
 from .sim_runtime import SimParams, SimState, append_engineering_telemetry, clip_force_xy, rate_limit_xy_force, step_vehicle
 from ..effectiveness import effectiveness_table_for_topology, hardware_assumptions_payload
 from ..topology import default_ring_topology
-from ..icd import ActuatorHealthState, EstimatedVehicleState, RedirectTarget
+from ..icd import ActuatorHealthState, RedirectTarget
 from ..vehicle_controller import command_directional_force, track_redirect_velocity, track_step_snap_brake, track_step_snap_reverse
 
 def run_demo(dir_deg: float, fxy_n: float, duration_s: float, yaw_hold_deg: float = 0.0, mz_nm: float = 0.0, version: str = "v2", geom: RingGeometry | None = None, sim: SimParams | None = None):
@@ -153,21 +153,21 @@ def run_step_test_v3(dir_deg_a: float = 0.0, dir_deg_b: float = 180.0, fxy_n: fl
         net = execution.net_force_n
         mz_est = execution.mz_est_nm
         speed = execution.speed_mps
-        hist["fan_thrust_16"].append(list(telemetry["fan_actual_16"]))
-
-        hist["t"].append(t)
-        hist["x"].append(st.x_m); hist["y"].append(st.y_m); hist["z"].append(st.z_m)
-        hist["vx"].append(st.vx_mps); hist["vy"].append(st.vy_mps); hist["vz"].append(st.vz_mps)
-        hist["yaw_deg"].append(st.yaw_deg); hist["yaw_rate_deg_s"].append(st.yaw_rate_deg_s)
-        hist["mz_est"].append(float(mz_est))
-        hist["alpha_deg_rms"].append(float(np.sqrt(np.mean(np.degrees(alpha_actual) ** 2))))
-        hist["ft_tan_rms"].append(float(np.sqrt(np.mean(state.ft_tan_per_seg_n ** 2))))
-        # full per-segment data for visualization
-        hist["alpha_deg_32"].append(list(np.degrees(alpha_actual)))
-        hist["ft_tan_32"].append(list(state.ft_tan_per_seg_n))
-        hist["speed"].append(speed)
-        hist["cmd_dir_deg"].append(dir_deg)
-        append_engineering_telemetry(hist, telemetry, fx_cmd, fy_cmd, fz_cmd, net)
+        append_stateful_maneuver_history(
+            hist,
+            t=t,
+            st=st,
+            speed=speed,
+            mz_est=mz_est,
+            alpha_actual_rad=alpha_actual,
+            ft_tan_per_seg_n=state.ft_tan_per_seg_n,
+            telemetry=telemetry,
+            fx_cmd=fx_cmd,
+            fy_cmd=fy_cmd,
+            fz_cmd=fz_cmd,
+            net_force_n=net,
+            extras={"cmd_dir_deg": dir_deg},
+        )
 
     coupling = yaw_track_coupling_mean_abs(hist)
     t_arr = np.array(hist["t"], float)
@@ -336,32 +336,8 @@ def run_step_snap_v3(
         fxy_budget_n *= 0.70 + 0.30 * power_priority_scale
         fxy_budget_n *= plenum_power_trim
 
-        maneuver_state = EstimatedVehicleState(
-            x_m=st.x_m,
-            y_m=st.y_m,
-            z_m=st.z_m,
-            vx_mps=st.vx_mps,
-            vy_mps=st.vy_mps,
-            vz_mps=st.vz_mps,
-            yaw_deg=st.yaw_deg,
-            yaw_rate_deg_s=st.yaw_rate_deg_s,
-            battery_soc_pct=100.0 * power_state.soc_frac,
-            bus_voltage_v=power_state.voltage_v,
-            continuous_power_ratio=float(guard["continuous_power_ratio"]),
-            thermal_scale_pct=100.0 * float(guard["thermal_guard_scale"]),
-            fault_available_scale=float(guard["fault_available_scale"]),
-            fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
-        )
-        maneuver_health = ActuatorHealthState(
-            lateral_budget_n=fxy_budget_n,
-            guard_scale=float(guard["guard_scale"]),
-            response_scale=float(guard["fault_response_scale"]),
-            continuous_power_ratio=float(guard["continuous_power_ratio"]),
-            thermal_scale_pct=100.0 * float(guard["thermal_guard_scale"]),
-            supply_scale_pct=100.0 * float(guard["supply_guard_scale"]),
-            fault_available_scale=float(guard["fault_available_scale"]),
-            fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
-        )
+        maneuver_state = build_maneuver_state(st, power_state, guard)
+        maneuver_health = build_maneuver_health(fxy_budget_n=fxy_budget_n, guard=guard)
 
         if k < step_idx:
             phase = "A"
@@ -484,38 +460,39 @@ def run_step_snap_v3(
         net = execution.net_force_n
         mz_est = execution.mz_est_nm
         speed = execution.speed_mps
-        hist["fan_thrust_16"].append(list(telemetry["fan_actual_16"]))
-
-        hist["t"].append(t)
-        hist["x"].append(st.x_m); hist["y"].append(st.y_m); hist["z"].append(st.z_m)
-        hist["vx"].append(st.vx_mps); hist["vy"].append(st.vy_mps); hist["vz"].append(st.vz_mps)
-        hist["speed"].append(speed)
-        hist["yaw_deg"].append(st.yaw_deg); hist["yaw_rate_deg_s"].append(st.yaw_rate_deg_s)
-        hist["mz_est"].append(float(mz_est))
-        hist["alpha_deg_rms"].append(float(np.sqrt(np.mean(np.degrees(alpha_actual) ** 2))))
-        hist["ft_tan_rms"].append(float(np.sqrt(np.mean(state.ft_tan_per_seg_n ** 2))))
-        # per-segment arrays for snap visualization
-        hist["alpha_deg_32"].append(list(np.degrees(alpha_actual)))
-        hist["ft_tan_32"].append(list(state.ft_tan_per_seg_n))
-        hist["cmd_phase"].append(phase)
-        hist["cmd_dir_deg"].append(dir_deg if isinstance(dir_deg, float) else float(dir_deg))
-        hist["fx_cmd"].append(float(fx_cmd)); hist["fy_cmd"].append(float(fy_cmd))
-        hist["guard_scale"].append(float(guard["guard_scale"]))
-        hist["flap_guard_scale"].append(float(guard["flap_guard_scale"]))
-        hist["power_guard_scale"].append(float(guard["power_guard_scale"]))
-        hist["thermal_guard_scale"].append(float(guard["thermal_guard_scale"]))
-        hist["supply_guard_scale"].append(float(guard["supply_guard_scale"]))
-        hist["fault_guard_scale"].append(float(guard["fault_guard_scale"]))
-        hist["fault_response_scale"].append(float(guard["fault_response_scale"]))
-        hist["fault_available_scale"].append(float(guard["fault_available_scale"]))
-        hist["fault_asymmetry_pct"].append(float(guard["fault_asymmetry_pct"]))
-        hist["fxy_budget_n"].append(float(fxy_budget_n))
-        hist["budget_ratio"].append(float(guard["budget_ratio"]))
-        hist["speed_guard_scale"].append(float(speed_guard_scale))
-        hist["gain_guard_scale"].append(float(gain_guard_scale))
-        hist["continuous_power_ratio"].append(float(guard["continuous_power_ratio"]))
-        hist["flap_usage_ratio"].append(float(guard["flap_usage_ratio"]))
-        append_engineering_telemetry(hist, telemetry, fx_cmd, fy_cmd, fz_cmd, net)
+        append_stateful_maneuver_history(
+            hist,
+            t=t,
+            st=st,
+            speed=speed,
+            mz_est=mz_est,
+            alpha_actual_rad=alpha_actual,
+            ft_tan_per_seg_n=state.ft_tan_per_seg_n,
+            telemetry=telemetry,
+            fx_cmd=fx_cmd,
+            fy_cmd=fy_cmd,
+            fz_cmd=fz_cmd,
+            net_force_n=net,
+            extras={
+                "cmd_phase": phase,
+                "cmd_dir_deg": dir_deg if isinstance(dir_deg, float) else float(dir_deg),
+                "guard_scale": float(guard["guard_scale"]),
+                "flap_guard_scale": float(guard["flap_guard_scale"]),
+                "power_guard_scale": float(guard["power_guard_scale"]),
+                "thermal_guard_scale": float(guard["thermal_guard_scale"]),
+                "supply_guard_scale": float(guard["supply_guard_scale"]),
+                "fault_guard_scale": float(guard["fault_guard_scale"]),
+                "fault_response_scale": float(guard["fault_response_scale"]),
+                "fault_available_scale": float(guard["fault_available_scale"]),
+                "fault_asymmetry_pct": float(guard["fault_asymmetry_pct"]),
+                "fxy_budget_n": float(fxy_budget_n),
+                "budget_ratio": float(guard["budget_ratio"]),
+                "speed_guard_scale": float(speed_guard_scale),
+                "gain_guard_scale": float(gain_guard_scale),
+                "continuous_power_ratio": float(guard["continuous_power_ratio"]),
+                "flap_usage_ratio": float(guard["flap_usage_ratio"]),
+            },
+        )
 
     # ----- Gate metrics -----
     t_arr = np.array(hist["t"], float)
@@ -756,32 +733,8 @@ def run_step_redirect_v3(
                 phase_scale = 0.78 + 0.22 * settle_progress
 
             phase_scale *= gain_guard_scale
-            maneuver_health = ActuatorHealthState(
-                lateral_budget_n=fxy_budget_n,
-                guard_scale=float(guard["guard_scale"]),
-                response_scale=float(guard["fault_response_scale"]),
-                continuous_power_ratio=float(guard["continuous_power_ratio"]),
-                thermal_scale_pct=100.0 * float(guard["thermal_guard_scale"]),
-                supply_scale_pct=100.0 * float(guard["supply_guard_scale"]),
-                fault_available_scale=float(guard["fault_available_scale"]),
-                fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
-            )
-            maneuver_state = EstimatedVehicleState(
-                x_m=st.x_m,
-                y_m=st.y_m,
-                z_m=st.z_m,
-                vx_mps=st.vx_mps,
-                vy_mps=st.vy_mps,
-                vz_mps=st.vz_mps,
-                yaw_deg=st.yaw_deg,
-                yaw_rate_deg_s=st.yaw_rate_deg_s,
-                battery_soc_pct=100.0 * power_state.soc_frac,
-                bus_voltage_v=power_state.voltage_v,
-                continuous_power_ratio=float(guard["continuous_power_ratio"]),
-                thermal_scale_pct=100.0 * float(guard["thermal_guard_scale"]),
-                fault_available_scale=float(guard["fault_available_scale"]),
-                fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
-            )
+            maneuver_health = build_maneuver_health(fxy_budget_n=fxy_budget_n, guard=guard)
+            maneuver_state = build_maneuver_state(st, power_state, guard)
             redirect_target = RedirectTarget(
                 desired_ux=desired_ux,
                 desired_uy=desired_uy,
@@ -835,21 +788,21 @@ def run_step_redirect_v3(
         net = execution.net_force_n
         mz_est = execution.mz_est_nm
         speed = execution.speed_mps
-        hist["fan_thrust_16"].append(list(telemetry["fan_actual_16"]))
-        hist["t"].append(t)
-        hist["x"].append(st.x_m); hist["y"].append(st.y_m); hist["z"].append(st.z_m)
-        hist["vx"].append(st.vx_mps); hist["vy"].append(st.vy_mps); hist["vz"].append(st.vz_mps)
-        hist["speed"].append(speed)
-        hist["yaw_deg"].append(st.yaw_deg); hist["yaw_rate_deg_s"].append(st.yaw_rate_deg_s)
-        hist["mz_est"].append(float(mz_est))
-        hist["alpha_deg_rms"].append(float(np.sqrt(np.mean(np.degrees(alpha_actual) ** 2))))
-        hist["ft_tan_rms"].append(float(np.sqrt(np.mean(state.ft_tan_per_seg_n ** 2))))
-        hist["alpha_deg_32"].append(list(np.degrees(alpha_actual)))
-        hist["ft_tan_32"].append(list(state.ft_tan_per_seg_n))
-        hist["cmd_phase"].append(phase)
-        hist["cmd_dir_deg"].append(float(dir_deg))
-        hist["fx_cmd"].append(float(fx_cmd)); hist["fy_cmd"].append(float(fy_cmd))
-        append_engineering_telemetry(hist, telemetry, fx_cmd, fy_cmd, fz_cmd, net)
+        append_stateful_maneuver_history(
+            hist,
+            t=t,
+            st=st,
+            speed=speed,
+            mz_est=mz_est,
+            alpha_actual_rad=alpha_actual,
+            ft_tan_per_seg_n=state.ft_tan_per_seg_n,
+            telemetry=telemetry,
+            fx_cmd=fx_cmd,
+            fy_cmd=fy_cmd,
+            fz_cmd=fz_cmd,
+            net_force_n=net,
+            extras={"cmd_phase": phase, "cmd_dir_deg": float(dir_deg)},
+        )
 
     t_arr = np.array(hist["t"], float)
     vx_arr = np.array(hist["vx"], float)
@@ -1013,22 +966,28 @@ def run_repel_test_v4(obstacle_x_m: float = 30.0, obstacle_y_m: float = 0.0, ini
         net = execution.net_force_n
         mz_est = execution.mz_est_nm
         speed = execution.speed_mps
-        hist["fan_thrust_16"].append(list(telemetry["fan_actual_16"]))
-
-        hist["t"].append(t)
-        hist["x"].append(st.x_m); hist["y"].append(st.y_m); hist["z"].append(st.z_m)
-        hist["vx"].append(st.vx_mps); hist["vy"].append(st.vy_mps); hist["vz"].append(st.vz_mps); hist["speed"].append(speed)
-        hist["yaw_deg"].append(st.yaw_deg); hist["yaw_rate_deg_s"].append(st.yaw_rate_deg_s)
-        hist["fx_cmd"].append(fx_cmd); hist["fy_cmd"].append(fy_cmd)
-        hist["dist_to_obstacle"].append(dist)
-        hist["mz_est"].append(float(mz_est))
-        hist["alpha_deg_rms"].append(float(np.sqrt(np.mean(np.degrees(alpha_actual) ** 2))))
-        hist["ft_tan_rms"].append(float(np.sqrt(np.mean(state.ft_tan_per_seg_n ** 2))))
-        # per-segment arrays for visualization
-        hist["alpha_deg_32"].append(list(np.degrees(alpha_actual)))
-        hist["ft_tan_32"].append(list(state.ft_tan_per_seg_n))
-        hist["faults"].append({"stuck_flap_idx": fault.stuck_flap_idx, "dead_fan_group": fault.dead_fan_group, "plenum_sector_idx": fault.plenum_sector_idx})
-        append_engineering_telemetry(hist, telemetry, fx_cmd, fy_cmd, fz_cmd, net)
+        append_stateful_maneuver_history(
+            hist,
+            t=t,
+            st=st,
+            speed=speed,
+            mz_est=mz_est,
+            alpha_actual_rad=alpha_actual,
+            ft_tan_per_seg_n=state.ft_tan_per_seg_n,
+            telemetry=telemetry,
+            fx_cmd=fx_cmd,
+            fy_cmd=fy_cmd,
+            fz_cmd=fz_cmd,
+            net_force_n=net,
+            extras={
+                "dist_to_obstacle": dist,
+                "faults": {
+                    "stuck_flap_idx": fault.stuck_flap_idx,
+                    "dead_fan_group": fault.dead_fan_group,
+                    "plenum_sector_idx": fault.plenum_sector_idx,
+                },
+            },
+        )
 
     coupling = yaw_track_coupling_mean_abs(hist)
     meta = {"version": "v4", "obstacle": {"x_m": obstacle_x_m, "y_m": obstacle_y_m}, "field": field.__dict__, "fault": fault.__dict__,

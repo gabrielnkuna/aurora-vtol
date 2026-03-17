@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
+
+import numpy as np
 
 from .dynamics import AllocatorState, ActuatorLimits, PlenumModel
 from .faults import FaultSpec
 from .model import RingGeometry, segment_angles_rad
 from .power_system import PowerSystemParams, init_hover_power_state, smoothstep01
-from .sim_runtime import SimParams, SimState
+from .sim_runtime import SimParams, SimState, append_engineering_telemetry
 from ..effectiveness import effectiveness_table_for_topology
+from ..icd import ActuatorHealthState, EstimatedVehicleState
 from ..topology import default_ring_topology
 
 
@@ -116,3 +120,100 @@ def build_stateful_maneuver_setup(
         effectiveness=effectiveness,
         fz_cmd=fz_cmd,
     )
+
+
+def build_maneuver_state(st: SimState, power_state: object, guard: Mapping[str, float]) -> EstimatedVehicleState:
+    return EstimatedVehicleState(
+        x_m=st.x_m,
+        y_m=st.y_m,
+        z_m=st.z_m,
+        vx_mps=st.vx_mps,
+        vy_mps=st.vy_mps,
+        vz_mps=st.vz_mps,
+        yaw_deg=st.yaw_deg,
+        yaw_rate_deg_s=st.yaw_rate_deg_s,
+        battery_soc_pct=100.0 * power_state.soc_frac,
+        bus_voltage_v=power_state.voltage_v,
+        continuous_power_ratio=float(guard["continuous_power_ratio"]),
+        thermal_scale_pct=100.0 * float(guard["thermal_guard_scale"]),
+        fault_available_scale=float(guard["fault_available_scale"]),
+        fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
+    )
+
+
+def build_maneuver_health(*, fxy_budget_n: float, guard: Mapping[str, float]) -> ActuatorHealthState:
+    return ActuatorHealthState(
+        lateral_budget_n=fxy_budget_n,
+        guard_scale=float(guard["guard_scale"]),
+        response_scale=float(guard["fault_response_scale"]),
+        continuous_power_ratio=float(guard["continuous_power_ratio"]),
+        thermal_scale_pct=100.0 * float(guard["thermal_guard_scale"]),
+        supply_scale_pct=100.0 * float(guard["supply_guard_scale"]),
+        fault_available_scale=float(guard["fault_available_scale"]),
+        fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
+    )
+
+
+def append_stateful_maneuver_history(
+    hist: dict,
+    *,
+    t: float,
+    st: SimState,
+    speed: float | None,
+    mz_est: float,
+    alpha_actual_rad,
+    ft_tan_per_seg_n,
+    telemetry: Mapping[str, object],
+    fx_cmd: float,
+    fy_cmd: float,
+    fz_cmd: float,
+    net_force_n,
+    extras: Mapping[str, object] | None = None,
+) -> None:
+    alpha_actual_rad = np.asarray(alpha_actual_rad, dtype=float)
+    ft_tan_per_seg_n = np.asarray(ft_tan_per_seg_n, dtype=float)
+
+    if "fan_thrust_16" in hist and "fan_actual_16" in telemetry:
+        hist["fan_thrust_16"].append(list(telemetry["fan_actual_16"]))
+
+    if "t" in hist:
+        hist["t"].append(float(t))
+    if "x" in hist:
+        hist["x"].append(st.x_m)
+    if "y" in hist:
+        hist["y"].append(st.y_m)
+    if "z" in hist:
+        hist["z"].append(st.z_m)
+    if "vx" in hist:
+        hist["vx"].append(st.vx_mps)
+    if "vy" in hist:
+        hist["vy"].append(st.vy_mps)
+    if "vz" in hist:
+        hist["vz"].append(st.vz_mps)
+    if "speed" in hist and speed is not None:
+        hist["speed"].append(float(speed))
+    if "yaw_deg" in hist:
+        hist["yaw_deg"].append(st.yaw_deg)
+    if "yaw_rate_deg_s" in hist:
+        hist["yaw_rate_deg_s"].append(st.yaw_rate_deg_s)
+    if "mz_est" in hist:
+        hist["mz_est"].append(float(mz_est))
+    if "alpha_deg_rms" in hist:
+        hist["alpha_deg_rms"].append(float(np.sqrt(np.mean(np.degrees(alpha_actual_rad) ** 2))))
+    if "ft_tan_rms" in hist:
+        hist["ft_tan_rms"].append(float(np.sqrt(np.mean(ft_tan_per_seg_n ** 2))))
+    if "alpha_deg_32" in hist:
+        hist["alpha_deg_32"].append(list(np.degrees(alpha_actual_rad)))
+    if "ft_tan_32" in hist:
+        hist["ft_tan_32"].append(list(ft_tan_per_seg_n))
+    if "fx_cmd" in hist:
+        hist["fx_cmd"].append(float(fx_cmd))
+    if "fy_cmd" in hist:
+        hist["fy_cmd"].append(float(fy_cmd))
+
+    if extras:
+        for key, value in extras.items():
+            if key in hist:
+                hist[key].append(value)
+
+    append_engineering_telemetry(hist, telemetry, fx_cmd, fy_cmd, fz_cmd, net_force_n)

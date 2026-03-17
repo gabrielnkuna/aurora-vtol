@@ -235,11 +235,13 @@ Responsibilities:
 
 ### `allocator/maneuver_support.py`
 
-Shared maneuver setup and shaping helpers.
+Shared maneuver setup, control-context, history, and shaping helpers.
 
 Responsibilities:
 
 - initialize common stateful maneuver defaults and topology/effectiveness state
+- build reusable maneuver ICD context from live sim state and guard outputs
+- append common stateful maneuver history and engineering telemetry
 - provide reusable turn-geometry helpers for redirect and snap maneuvers
 - centralize small maneuver math helpers that should not live inside individual scenarios
 

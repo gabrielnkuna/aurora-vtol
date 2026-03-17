@@ -2,9 +2,18 @@ import unittest
 
 from aurora_vtol.allocator.dynamics import ActuatorLimits, PlenumModel
 from aurora_vtol.allocator.faults import FaultSpec
-from aurora_vtol.allocator.maneuver_support import build_stateful_maneuver_setup, build_turn_geometry, heading_error_deg, unit_or_default
+from aurora_vtol.allocator.maneuver_support import (
+    append_stateful_maneuver_history,
+    build_maneuver_health,
+    build_maneuver_state,
+    build_stateful_maneuver_setup,
+    build_turn_geometry,
+    heading_error_deg,
+    unit_or_default,
+)
 from aurora_vtol.allocator.model import RingGeometry
-from aurora_vtol.allocator.sim_runtime import SimParams
+from aurora_vtol.allocator.power_system import PowerSystemState
+from aurora_vtol.allocator.sim_runtime import SimParams, SimState
 
 
 class ManeuverSupportTests(unittest.TestCase):
@@ -35,6 +44,88 @@ class ManeuverSupportTests(unittest.TestCase):
 
     def test_unit_or_default_uses_fallback_for_near_zero(self):
         self.assertEqual(unit_or_default(0.0, 0.0, (1.0, 0.0)), (1.0, 0.0))
+
+    def test_build_maneuver_state_and_health_reflect_guard_inputs(self):
+        st = SimState(x_m=1.0, y_m=2.0, z_m=3.0, vx_mps=4.0, vy_mps=5.0, vz_mps=6.0, yaw_deg=7.0, yaw_rate_deg_s=8.0)
+        power_state = PowerSystemState(soc_frac=0.9, voltage_v=57.0, thermal_scale=0.95, burst_reserve_j=100.0)
+        guard = {
+            'continuous_power_ratio': 0.91,
+            'thermal_guard_scale': 0.88,
+            'fault_available_scale': 0.77,
+            'fault_asymmetry_pct': 12.0,
+            'guard_scale': 0.66,
+            'fault_response_scale': 0.55,
+            'supply_guard_scale': 0.44,
+        }
+
+        maneuver_state = build_maneuver_state(st, power_state, guard)
+        maneuver_health = build_maneuver_health(fxy_budget_n=1234.0, guard=guard)
+
+        self.assertEqual(maneuver_state.x_m, 1.0)
+        self.assertEqual(maneuver_state.bus_voltage_v, 57.0)
+        self.assertEqual(maneuver_state.thermal_scale_pct, 88.0)
+        self.assertEqual(maneuver_health.lateral_budget_n, 1234.0)
+        self.assertEqual(maneuver_health.guard_scale, 0.66)
+        self.assertEqual(maneuver_health.supply_scale_pct, 44.0)
+
+    def test_append_stateful_maneuver_history_updates_common_fields(self):
+        st = SimState(x_m=1.0, y_m=2.0, z_m=3.0, vx_mps=4.0, vy_mps=5.0, vz_mps=6.0, yaw_deg=7.0, yaw_rate_deg_s=8.0)
+        hist = {
+            't': [], 'x': [], 'y': [], 'z': [], 'vx': [], 'vy': [], 'vz': [], 'speed': [],
+            'yaw_deg': [], 'yaw_rate_deg_s': [], 'mz_est': [], 'alpha_deg_rms': [], 'ft_tan_rms': [],
+            'alpha_deg_32': [], 'ft_tan_32': [], 'fan_thrust_16': [], 'fx_cmd': [], 'fy_cmd': [],
+            'cmd_phase': [], 'power_total_kw': [], 'continuous_power_pct': []
+        }
+        telemetry = {
+            'fan_cmd_16': [0.9, 1.9],
+            'fan_actual_16': [1.0, 2.0],
+            'fan_temp_c_16': [30.0, 31.0],
+            'fan_thermal_scale_16': [1.0, 1.0],
+            'alpha_cmd_deg_32': [0.0, 1.0],
+            'alpha_cmd_rms': 0.5,
+            'battery_v': 57.0,
+            'battery_a': 100.0,
+            'battery_soc': 90.0,
+            'power_w': 12300.0,
+            'energy_wh': 12.0,
+            'thrust_scale_pct': 95.0,
+            'continuous_power_pct': 45.6,
+            'continuous_power_raw_pct': 47.0,
+            'sustained_power_pct': 44.0,
+            'burst_reserve_pct': 80.0,
+            'burst_clip_pct': 0.0,
+            'burst_active_time_s': 0.1,
+            'power_margin_kw': 3.2,
+            'thermal_scale_pct': 96.0,
+            'fan_temp_max_c': 31.0,
+            'fan_temp_mean_c': 30.5,
+            'fan_response_pct': 98.0,
+            'power_total_kw': 12.3,
+        }
+
+        append_stateful_maneuver_history(
+            hist,
+            t=0.1,
+            st=st,
+            speed=6.4,
+            mz_est=9.9,
+            alpha_actual_rad=[0.0, 0.1],
+            ft_tan_per_seg_n=[1.0, 2.0],
+            telemetry=telemetry,
+            fx_cmd=10.0,
+            fy_cmd=20.0,
+            fz_cmd=30.0,
+            net_force_n=[11.0, 22.0, 33.0],
+            extras={'cmd_phase': 'A'},
+        )
+
+        self.assertEqual(hist['t'], [0.1])
+        self.assertEqual(hist['fan_thrust_16'][0], [1.0, 2.0])
+        self.assertEqual(hist['fx_cmd'], [10.0])
+        self.assertEqual(hist['cmd_phase'], ['A'])
+        self.assertEqual(hist['power_w'], [12300.0])
+        self.assertEqual(hist['continuous_power_pct'], [45.6])
+        self.assertEqual(len(hist['alpha_deg_32'][0]), 2)
 
 
 if __name__ == '__main__':
