@@ -12,7 +12,7 @@ from .metrics import yaw_track_coupling_mean_abs
 from .model import RingGeometry, net_force_and_yaw_moment, segment_angles_rad, thrust_vectors_body
 from .power_system import PowerSystemParams, apply_power_system, guidance_force_budget, init_hover_power_state
 from .response import compute_step_metrics
-from .sim import SimParams, SimState, append_engineering_telemetry, clip_force_xy, rate_limit_xy_force, step_vehicle
+from .sim_runtime import SimParams, SimState, append_engineering_telemetry, clip_force_xy, rate_limit_xy_force, step_vehicle
 from ..effectiveness import effectiveness_table_for_topology, hardware_assumptions_payload
 from ..icd import ActuatorHealthState, EstimatedVehicleState, RedirectTarget
 from ..topology import default_ring_topology

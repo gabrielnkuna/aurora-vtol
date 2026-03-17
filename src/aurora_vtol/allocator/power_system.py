@@ -12,7 +12,7 @@ from .model import RingGeometry, segment_angles_rad
 from ..topology import RingActuatorTopology, default_ring_topology
 
 if TYPE_CHECKING:
-    from .sim import SimParams
+    from .sim_runtime import SimParams
 
 @dataclass(frozen=True)
 class PowerSystemParams:

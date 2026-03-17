@@ -165,16 +165,27 @@ Responsibilities:
 - spatial force generation around obstacles or field centers
 - maneuver shaping inputs used by higher-level tests
 
-### `allocator/sim.py`
+### `allocator/sim_runtime.py`
 
-Mission and plant simulation.
+Shared simulation runtime helpers.
 
 Responsibilities:
 
+- define `SimParams` and `SimState`
 - propagate vehicle state
+- rate-limit XY commands and clip lateral force
+- append common engineering telemetry
+- translate between segment and fan-group views when needed
+
+### `allocator/sim.py`
+
+Coordinate mission and plant simulation.
+
+Responsibilities:
+
 - run coordinate missions
 - apply safety and obstacle influences
-- record telemetry and outputs
+- record mission telemetry and outputs
 
 ### `allocator/maneuver_scenarios.py`
 
