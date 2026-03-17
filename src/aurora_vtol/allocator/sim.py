@@ -13,7 +13,7 @@ from .faults import FaultSpec, apply_command_faults_to_alpha, apply_faults_to_al
 from .trace import save_trace_json
 from ..icd import ActuatorHealthState, EstimatedVehicleState, GuidanceTarget, RedirectTarget
 from ..topology import default_ring_topology
-from ..effectiveness import effectiveness_table_for_topology
+from ..effectiveness import effectiveness_table_for_topology, hardware_assumptions_payload
 from ..vehicle_controller import XYVehicleControllerGains, command_directional_force, track_redirect_velocity, track_step_snap_brake, track_step_snap_reverse, track_xy_position
 
 @dataclass(frozen=True)
@@ -903,7 +903,7 @@ def run_step_test_v3(dir_deg_a: float = 0.0, dir_deg_b: float = 180.0, fxy_n: fl
         d = (a - b + 180.0) % 360.0 - 180.0
         return abs(d)
 
-    # t90_dir_s: first time track is within 20° of target AND speed > 0.5m/s
+    # t90_dir_s: first time track is within 20 deg of target AND speed > 0.5m/s
     t90_dir = None
     for i in range(step_idx, len(t_arr)):
         if sp_arr[i] > 0.5 and ang_err(track_deg[i], target_deg) <= 20.0:
@@ -1300,7 +1300,7 @@ def run_step_snap_v3(
             t_reversal = float(t_arr[i] - step_t)
             break
 
-    # 4) time to align direction within 20° (and speed > 0.5)
+    # 4) time to align direction within 20 deg (and speed > 0.5)
     t90_dir = None
     for i in range(step_idx, len(t_arr)):
         if sp_arr[i] > 0.5 and ang_err(track_deg[i], target_deg) <= 20.0:
@@ -1361,7 +1361,8 @@ def run_step_snap_v3(
         "timestamps": {
             "step_t": step_t,
             "snap_end_t": snap_end_t,
-        }
+        },
+        "hardware_assumptions": hardware_assumptions_payload(topology, effectiveness),
     }
 
     return out, hist
@@ -1695,7 +1696,8 @@ def run_step_redirect_v3(
         "timestamps": {
             "step_t": step_t,
             "redirect_end_t": redirect_end_t,
-        }
+        },
+        "hardware_assumptions": hardware_assumptions_payload(topology, effectiveness),
     }
 
     return out, hist
@@ -2087,6 +2089,7 @@ def run_coordinate_mission_v5(
             "ft_tan_rms": float(hist["ft_tan_rms"][-1]),
             "mz_est_nm": float(hist["mz_est"][-1]),
         },
+        "hardware_assumptions": hardware_assumptions_payload(topology, effectiveness),
     }
     return out, hist
 
@@ -2170,7 +2173,7 @@ def run_repel_test_v4(obstacle_x_m: float = 30.0, obstacle_y_m: float = 0.0, ini
 
     coupling = yaw_track_coupling_mean_abs(hist)
     meta = {"version": "v4", "obstacle": {"x_m": obstacle_x_m, "y_m": obstacle_y_m}, "field": field.__dict__, "fault": fault.__dict__,
-            "yaw_track_coupling_mean_abs_deg": coupling, "sim": {"dt_s": sim.dt_s, "mass_kg": sim.mass_kg, "drag_coeff": sim.drag_coeff, "gravity": sim.gravity, "yaw_inertia_kg_m2": sim.yaw_inertia_kg_m2, "yaw_damping_nm_per_rad_s": sim.yaw_damping_nm_per_rad_s, "z_drag_coeff": sim.z_drag_coeff, "z_hold_kp_n_per_m": sim.z_hold_kp_n_per_m, "z_hold_kd_n_per_mps": sim.z_hold_kd_n_per_mps}, "limits": lim.__dict__, "plenum": pl.__dict__, "power": power.__dict__}
+            "yaw_track_coupling_mean_abs_deg": coupling, "sim": {"dt_s": sim.dt_s, "mass_kg": sim.mass_kg, "drag_coeff": sim.drag_coeff, "gravity": sim.gravity, "yaw_inertia_kg_m2": sim.yaw_inertia_kg_m2, "yaw_damping_nm_per_rad_s": sim.yaw_damping_nm_per_rad_s, "z_drag_coeff": sim.z_drag_coeff, "z_hold_kp_n_per_m": sim.z_hold_kp_n_per_m, "z_hold_kd_n_per_mps": sim.z_hold_kd_n_per_mps}, "limits": lim.__dict__, "plenum": pl.__dict__, "power": power.__dict__, "hardware_assumptions": hardware_assumptions_payload(topology, effectiveness)}
     if trace_out:
         save_trace_json(trace_out, meta=meta, hist=hist)
 
@@ -2235,7 +2238,7 @@ def run_repel_test_v4(obstacle_x_m: float = 30.0, obstacle_y_m: float = 0.0, ini
                 t_to_vrad_away_0p5 = float(t_arr[i] - t_arr[enter_idx])
                 break
 
-    # old speed‑difference based response (kept for compatibility)
+    # old speed-difference based response (kept for compatibility)
     t_resp = None
     if t_enter is not None:
         v0 = float(sp_arr[0])

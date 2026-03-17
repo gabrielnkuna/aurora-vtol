@@ -36,6 +36,15 @@ def load_trace_json(path: str | Path) -> tuple[dict, dict]:
     return data.get('meta', {}), data.get('hist', {})
 
 
+def script_metadata_from_trace_meta(meta: dict) -> dict:
+    return {
+        'trace_version': meta.get('version'),
+        'profile': meta.get('profile'),
+        'mission': meta.get('mission'),
+        'hardware_assumptions': meta.get('hardware_assumptions'),
+    }
+
+
 def build_setpoint_script(meta: dict, hist: dict, hold_final_s: float = 2.0, rate_hz: float | None = None) -> list[BridgeSetpoint]:
     t = [float(v) for v in hist.get('t', [])]
     if not t:
@@ -121,11 +130,12 @@ def summarize_script(meta: dict, script: list[BridgeSetpoint]) -> dict:
         },
         'mission': mission,
         'planner': planner,
+        'hardware_assumptions': meta.get('hardware_assumptions'),
         'phase_counts': phases,
     }
 
 
-def summarize_setpoints(script: list[BridgeSetpoint]) -> dict:
+def summarize_setpoints(script: list[BridgeSetpoint], metadata: dict | None = None) -> dict:
     if not script:
         raise ValueError('bridge script is empty')
     return {
@@ -134,13 +144,16 @@ def summarize_setpoints(script: list[BridgeSetpoint]) -> dict:
         'start': asdict(script[0]),
         'final': asdict(script[-1]),
         'phase_counts': _phase_counts(script),
+        'metadata': metadata or {},
     }
 
 
-def write_script_jsonl(path: str | Path, script: list[BridgeSetpoint]) -> None:
+def write_script_jsonl(path: str | Path, script: list[BridgeSetpoint], metadata: dict | None = None) -> None:
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open('w', encoding='utf-8') as f:
+        if metadata:
+            f.write(json.dumps({'kind': 'bridge_meta', 'metadata': metadata}) + '\n')
         for sp in script:
             f.write(json.dumps(asdict(sp)) + '\n')
 
@@ -535,6 +548,8 @@ def load_script_jsonl(path: str | Path) -> list[BridgeSetpoint]:
         if not line:
             continue
         row = json.loads(line)
+        if str(row.get('kind', '')).lower() == 'bridge_meta':
+            continue
         try:
             script.append(
                 BridgeSetpoint(
@@ -556,6 +571,19 @@ def load_script_jsonl(path: str | Path) -> list[BridgeSetpoint]:
     return script
 
 
+def load_script_jsonl_metadata(path: str | Path) -> dict | None:
+    script_path = Path(path)
+    for line in script_path.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        row = json.loads(line)
+        if str(row.get('kind', '')).lower() == 'bridge_meta':
+            metadata = row.get('metadata')
+            return metadata if isinstance(metadata, dict) else {}
+    return None
+
+
 def _phase_counts(script: list[BridgeSetpoint]) -> dict[str, int]:
     phases: dict[str, int] = {}
     for sp in script:
@@ -563,7 +591,7 @@ def _phase_counts(script: list[BridgeSetpoint]) -> dict[str, int]:
     return phases
 
 
-def inspect_script(script: list[BridgeSetpoint]) -> dict:
+def inspect_script(script: list[BridgeSetpoint], metadata: dict | None = None) -> dict:
     if not script:
         raise ValueError('bridge script is empty')
 
@@ -644,6 +672,7 @@ def inspect_script(script: list[BridgeSetpoint]) -> dict:
         },
         'start': asdict(script[0]),
         'final': asdict(final),
+        'metadata': metadata or {},
         'notes': notes,
         'issues': issues,
         'ok': not issues,

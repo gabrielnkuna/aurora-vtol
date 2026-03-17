@@ -11,7 +11,7 @@ import typer
 
 from aurora_vtol.allocator.metrics import yaw_track_coupling_mean_abs
 from aurora_vtol.allocator.engineering import assess_trace, render_assessment, tune_coordinate_mission
-from aurora_vtol.bridge import build_qgc_wpl_mission, build_setpoint_script, inspect_script, load_script_jsonl, load_trace_json, stream_script_ardupilot_sitl, stream_script_mavlink, summarize_qgc_wpl_mission, summarize_script, summarize_setpoints, write_qgc_wpl_mission, write_script_jsonl, write_script_svg
+from aurora_vtol.bridge import build_qgc_wpl_mission, build_setpoint_script, inspect_script, load_script_jsonl, load_script_jsonl_metadata, load_trace_json, script_metadata_from_trace_meta, stream_script_ardupilot_sitl, stream_script_mavlink, summarize_qgc_wpl_mission, summarize_script, summarize_setpoints, write_qgc_wpl_mission, write_script_jsonl, write_script_svg
 from aurora_vtol.allocator.sim import MissionObstacle, PowerSystemParams, run_coordinate_mission_v5, run_demo, run_step_redirect_v3, run_step_test_v3, run_repel_test_v4, run_step_snap_v3
 from aurora_vtol.allocator.dynamics import ActuatorLimits, PlenumModel
 from aurora_vtol.allocator.field import RepelField
@@ -1230,8 +1230,9 @@ def bridge_inspect(
     svg_out: str = typer.Option("", "--svg-out", help="Optional SVG top-down path output"),
     fail_on_issues: bool = typer.Option(False, "--fail-on-issues/--no-fail-on-issues", help="Exit non-zero if validation finds issues"),
 ):
+    metadata = load_script_jsonl_metadata(script)
     setpoints = load_script_jsonl(script)
-    report = inspect_script(setpoints)
+    report = inspect_script(setpoints, metadata=metadata)
     if svg_out:
         write_script_svg(svg_out, setpoints, title=Path(script).name)
         report["svg_out"] = svg_out
@@ -1295,7 +1296,7 @@ def bridge_trace(
     summary = summarize_script(meta, script)
 
     if jsonl_out:
-        write_script_jsonl(jsonl_out, script)
+        write_script_jsonl(jsonl_out, script, metadata=script_metadata_from_trace_meta(meta))
         summary["jsonl_out"] = jsonl_out
 
     if dry_run or (not jsonl_out and not mavlink_out):
@@ -1400,11 +1401,12 @@ def bridge_sitl(
         summary = summarize_script(meta, setpoints)
         summary["input"] = {"trace": trace}
         if jsonl_out:
-            write_script_jsonl(jsonl_out, setpoints)
+            write_script_jsonl(jsonl_out, setpoints, metadata=script_metadata_from_trace_meta(meta))
             summary["jsonl_out"] = jsonl_out
     else:
+        script_metadata = load_script_jsonl_metadata(script)
         setpoints = load_script_jsonl(script)
-        summary = summarize_setpoints(setpoints)
+        summary = summarize_setpoints(setpoints, metadata=script_metadata)
         summary["input"] = {"script": script}
 
     summary["sitl"] = {
@@ -1489,6 +1491,8 @@ def alloc_demo(
         version=version,
     )
     coupling = yaw_track_coupling_mean_abs(hist)
+    topology = default_ring_topology(32)
+    effectiveness = effectiveness_table_for_topology(topology)
     out = {
         "allocator_version": version,
         "dir_deg": dir_deg,
@@ -1497,6 +1501,10 @@ def alloc_demo(
         "duration_s": duration_s,
         "yaw_hold_deg": yaw_hold_deg,
         "yaw_track_coupling_mean_abs_deg": coupling,
+        "hardware_assumptions": {
+            "topology": summarize_topology(topology),
+            "effectiveness": summarize_effectiveness_table(effectiveness),
+        },
         "final": {
             "x_m": hist["x"][-1],
             "y_m": hist["y"][-1],

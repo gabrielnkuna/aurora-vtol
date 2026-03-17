@@ -236,6 +236,24 @@ class RingActuatorTopology:
         return self.effectiveness_map(fault).segment_scale
 
 
+def summarize_topology(topology: RingActuatorTopology) -> dict:
+    if topology == RingActuatorTopology.aurora_ring_32():
+        name = 'aurora-ring-32'
+    elif topology == RingActuatorTopology.even_pairs(topology.segment_count):
+        name = f'even-pairs-{topology.segment_count}'
+    else:
+        name = 'custom-ring-topology'
+    return {
+        'name': name,
+        'segment_count': int(topology.segment_count),
+        'fan_count': int(topology.fan_count),
+        'plenum_count': int(len(topology.plenum_to_segments)),
+        'fan_nominal_sigma_segments': float(topology.fan_nominal_sigma_segments),
+        'fan_fault_sigma_segments': float(topology.fan_fault_sigma_segments),
+        'plenum_fault_sigma_segments': float(topology.plenum_fault_sigma_segments),
+    }
+
+
 def default_ring_topology(segment_count: int) -> RingActuatorTopology:
     if int(segment_count) == 32:
         return RingActuatorTopology.aurora_ring_32()

@@ -264,6 +264,29 @@ def build_seeded_effectiveness_table(topology: RingActuatorTopology) -> NominalE
     )
 
 
+def summarize_effectiveness_table(table: NominalEffectivenessTable) -> dict:
+    return {
+        'table_name': str(table.table_name),
+        'schema_version': str(table.schema_version),
+        'segment_count': int(table.segment_count),
+        'fan_count': int(table.fan_count),
+        'plenum_count': int(table.plenum_count),
+        'provenance': str(table.provenance),
+    }
+
+
+def hardware_assumptions_payload(
+    topology: RingActuatorTopology,
+    effectiveness: NominalEffectivenessTable,
+) -> dict:
+    from .topology import summarize_topology
+
+    return {
+        'topology': summarize_topology(topology),
+        'effectiveness': summarize_effectiveness_table(effectiveness),
+    }
+
+
 def effectiveness_table_for_topology(topology: RingActuatorTopology) -> NominalEffectivenessTable:
     if int(topology.segment_count) <= 0:
         raise ValueError(f"topology segment_count must be positive, got {topology.segment_count}")
