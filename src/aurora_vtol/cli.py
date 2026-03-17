@@ -24,7 +24,7 @@ from aurora_vtol.bridge import build_qgc_wpl_mission, build_setpoint_script, ins
 from aurora_vtol.allocator.mission_planning import MissionObstacle
 from aurora_vtol.allocator.power_system import PowerSystemParams
 from aurora_vtol.allocator.maneuver_scenarios import run_demo, run_step_redirect_v3, run_step_test_v3, run_repel_test_v4, run_step_snap_v3
-from aurora_vtol.allocator.sim import run_coordinate_mission_v5
+from aurora_vtol.allocator.coordinate_mission import run_coordinate_mission_v5
 
 from aurora_vtol.allocator.dynamics import ActuatorLimits, PlenumModel
 

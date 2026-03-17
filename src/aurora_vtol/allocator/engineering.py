@@ -6,7 +6,7 @@ import math
 import numpy as np
 
 from .model import RingGeometry
-from .sim import run_coordinate_mission_v5
+from .coordinate_mission import run_coordinate_mission_v5
 
 
 def _series(hist: dict, key: str) -> np.ndarray:

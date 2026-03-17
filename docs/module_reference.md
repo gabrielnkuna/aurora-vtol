@@ -177,15 +177,19 @@ Responsibilities:
 - append common engineering telemetry
 - translate between segment and fan-group views when needed
 
-### `allocator/sim.py`
+### `allocator/coordinate_mission.py`
 
-Coordinate mission and plant simulation.
+Coordinate mission orchestration.
 
 Responsibilities:
 
-- run coordinate missions
-- apply safety and obstacle influences
+- run routed coordinate missions
+- apply safety, route-following, and budget-aware guidance shaping
 - record mission telemetry and outputs
+
+### `allocator/sim.py`
+
+Compatibility fa?ade for the coordinate mission entry point and shared sim types.
 
 ### `allocator/maneuver_scenarios.py`
 
