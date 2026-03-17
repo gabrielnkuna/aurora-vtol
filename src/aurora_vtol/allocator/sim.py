@@ -819,6 +819,7 @@ def run_step_test_v3(dir_deg_a: float = 0.0, dir_deg_b: float = 180.0, fxy_n: fl
     steps = int(total_s / sim.dt_s)
     step_k = int(step_time_s / sim.dt_s)
     theta = segment_angles_rad(geom.n_segments)
+    topology = default_ring_topology(geom.n_segments)
     fz_cmd = sim.mass_kg * sim.gravity
 
     hist = {"t": [], "x": [], "y": [], "z": [], "vx": [], "vy": [], "vz": [], "yaw_deg": [], "yaw_rate_deg_s": [], "mz_est": [], "alpha_deg_rms": [], "ft_tan_rms": [], "speed": [], "cmd_dir_deg": [], "alpha_deg_32": [], "ft_tan_32": [], "fan_thrust_16": []}
@@ -832,7 +833,7 @@ def run_step_test_v3(dir_deg_a: float = 0.0, dir_deg_b: float = 180.0, fxy_n: fl
 
         alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault)
         alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
-        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault)
+        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
         ft_target = alloc.ft_tan_per_seg_n
 
         state = apply_actuator_limits(state, alpha_target, ft_target, lim, sim.dt_s, fault=fault)
@@ -1179,7 +1180,7 @@ def run_step_snap_v3(
 
         alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault)
         alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
-        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault)
+        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
         ft_target = alloc.ft_tan_per_seg_n
 
         # actuator limits
@@ -1545,7 +1546,7 @@ def run_step_redirect_v3(
 
         alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault)
         alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
-        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault)
+        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
         ft_target = alloc.ft_tan_per_seg_n
 
         state = apply_actuator_limits(state, alpha_target, ft_target, lim, sim.dt_s, fault=fault)
@@ -1732,6 +1733,7 @@ def run_coordinate_mission_v5(
 
     steps = int(total_s / sim.dt_s)
     theta = segment_angles_rad(geom.n_segments)
+    topology = default_ring_topology(geom.n_segments)
     fz_cmd = sim.mass_kg * sim.gravity
     transit_alt_m = max(cruise_alt_m, start_z_m, dest_z_m)
     planner_clearance_m = max(4.0, arrival_radius_m * 2.0)
@@ -1915,7 +1917,7 @@ def run_coordinate_mission_v5(
 
         alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault)
         alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
-        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault)
+        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
         ft_target = alloc.ft_tan_per_seg_n
         state = apply_actuator_limits(state, alpha_target, ft_target, lim, sim.dt_s, fault=fault)
 
@@ -2097,6 +2099,7 @@ def run_repel_test_v4(obstacle_x_m: float = 30.0, obstacle_y_m: float = 0.0, ini
     steps = int(total_s / sim.dt_s)
     fz_cmd = sim.mass_kg * sim.gravity
     theta = segment_angles_rad(geom.n_segments)
+    topology = default_ring_topology(geom.n_segments)
 
     hist = {"t": [], "x": [], "y": [], "z": [], "vx": [], "vy": [], "vz": [], "speed": [], "yaw_deg": [], "yaw_rate_deg_s": [], "fx_cmd": [], "fy_cmd": [], "dist_to_obstacle": [], "mz_est": [], "alpha_deg_rms": [], "ft_tan_rms": [], "alpha_deg_32": [], "ft_tan_32": [], "faults": [], "fan_thrust_16": []}
 
@@ -2107,7 +2110,7 @@ def run_repel_test_v4(obstacle_x_m: float = 30.0, obstacle_y_m: float = 0.0, ini
 
         alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault)
         alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
-        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault)
+        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
         ft_target = alloc.ft_tan_per_seg_n
 
         state = apply_actuator_limits(state, alpha_target, ft_target, lim, sim.dt_s, fault=fault)

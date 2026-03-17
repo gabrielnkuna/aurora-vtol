@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sys
 import unittest
+
+import numpy as np
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -9,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from aurora_vtol.icd import ActuatorHealthState, EstimatedVehicleState, RedirectTarget
 from aurora_vtol.topology import RingActuatorTopology
 from aurora_vtol.vehicle_controller import command_directional_force, track_redirect_velocity
+from aurora_vtol.allocator.faults import FaultSpec, apply_faults_to_thrust
 
 
 class ControllerTopologyRegressionTests(unittest.TestCase):
@@ -68,6 +71,31 @@ class ControllerTopologyRegressionTests(unittest.TestCase):
         topology = RingActuatorTopology.aurora_ring_32()
         with self.assertRaises(ValueError):
             topology.distribute_fan_means_to_segments([1.0] * 15, [1.0] * 32)
+
+    def test_apply_faults_to_thrust_uses_explicit_topology(self) -> None:
+        topology = RingActuatorTopology(
+            segment_count=4,
+            fan_to_segments=((0,), (1, 2, 3)),
+            plenum_to_segments=((0,), (1,), (2,), (3,)),
+            fan_nominal_sigma_segments=0.0,
+            fan_fault_sigma_segments=0.0,
+            plenum_fault_sigma_segments=0.0,
+        )
+        thrust = apply_faults_to_thrust(
+            np.array([10.0, 10.0, 10.0, 10.0], dtype=float),
+            FaultSpec(dead_fan_group=1, dead_fan_scale=0.0),
+            topology=topology,
+        )
+        self.assertListEqual(thrust.tolist(), [10.0, 0.0, 0.0, 0.0])
+
+    def test_apply_faults_to_thrust_shape_mismatch_raises(self) -> None:
+        topology = RingActuatorTopology.even_pairs(4)
+        with self.assertRaises(ValueError):
+            apply_faults_to_thrust(
+                np.array([10.0, 10.0, 10.0], dtype=float),
+                FaultSpec(dead_fan_group=0, dead_fan_scale=0.0),
+                topology=topology,
+            )
 
 
 if __name__ == "__main__":

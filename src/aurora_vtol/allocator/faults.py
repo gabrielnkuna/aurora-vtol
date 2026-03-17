@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
 
-from ..topology import default_ring_topology
+from ..topology import RingActuatorTopology, default_ring_topology
 
 _ALPHA_LIMIT_RAD = np.deg2rad(25.0)
 
@@ -60,10 +60,15 @@ def apply_faults_to_alpha(alpha_rad: np.ndarray, fault: FaultSpec) -> np.ndarray
             a[i] = np.deg2rad(float(fault.stuck_flap_alpha_deg))
     return _clip_alpha(a)
 
-def apply_faults_to_thrust(thrust_per_seg_n: np.ndarray, fault: FaultSpec) -> np.ndarray:
-    t = thrust_per_seg_n.copy()
-    topology = default_ring_topology(len(t))
-    scale = topology.segment_effectiveness_scales(fault)
-    if scale.shape == t.shape:
-        t *= scale
+def apply_faults_to_thrust(
+    thrust_per_seg_n: np.ndarray,
+    fault: FaultSpec,
+    topology: RingActuatorTopology | None = None,
+) -> np.ndarray:
+    t = np.asarray(thrust_per_seg_n, dtype=float).copy()
+    active_topology = default_ring_topology(len(t)) if topology is None else topology
+    scale = active_topology.segment_effectiveness_scales(fault)
+    if scale.shape != t.shape:
+        raise ValueError(f"fault scale shape {scale.shape} != thrust shape {t.shape}")
+    t *= scale
     return t
