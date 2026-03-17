@@ -242,6 +242,7 @@ Responsibilities:
 - initialize common stateful maneuver defaults and topology/effectiveness state
 - build reusable maneuver ICD context from live sim state and guard outputs
 - append common stateful maneuver history and engineering telemetry
+- compute reusable snap and redirect guard profiles from live power/fault budgets
 - provide reusable turn-geometry helpers for redirect and snap maneuvers
 - centralize small maneuver math helpers that should not live inside individual scenarios
 

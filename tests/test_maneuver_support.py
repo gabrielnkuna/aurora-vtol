@@ -6,6 +6,8 @@ from aurora_vtol.allocator.maneuver_support import (
     append_stateful_maneuver_history,
     build_maneuver_health,
     build_maneuver_state,
+    build_step_redirect_guard_profile,
+    build_step_snap_guard_profile,
     build_stateful_maneuver_setup,
     build_turn_geometry,
     heading_error_deg,
@@ -67,6 +69,42 @@ class ManeuverSupportTests(unittest.TestCase):
         self.assertEqual(maneuver_health.lateral_budget_n, 1234.0)
         self.assertEqual(maneuver_health.guard_scale, 0.66)
         self.assertEqual(maneuver_health.supply_scale_pct, 44.0)
+
+    def test_build_step_snap_guard_profile_applies_fault_and_plenum_scaling(self):
+        guard = {
+            'budget_ratio': 0.8,
+            'continuous_power_ratio': 0.97,
+            'power_guard_scale': 0.9,
+            'fault_guard_scale': 0.85,
+            'dead_align_scale': 1.1,
+            'dead_cross_scale': 0.92,
+            'dead_align_speed_floor_mps': 0.4,
+            'plenum_power_trim': 0.95,
+            'plenum_revector_trim': 0.9,
+            'plenum_align_speed_floor_mps': 0.3,
+            'plenum_brake_trim': 0.88,
+        }
+        profile = build_step_snap_guard_profile(initial_budget_n=2000.0, guard=guard, power_ratio_filt=1.0)
+        self.assertLess(profile.fxy_budget_n, 2000.0)
+        self.assertLess(profile.speed_guard_scale, 1.0)
+        self.assertLess(profile.gain_guard_scale, 1.0)
+        self.assertGreaterEqual(profile.power_priority_scale, 0.66)
+        self.assertEqual(profile.dead_align_scale, 1.1)
+        self.assertEqual(profile.plenum_brake_trim, 0.88)
+
+    def test_build_step_redirect_guard_profile_applies_budget_scaling(self):
+        guard = {
+            'budget_ratio': 0.7,
+            'continuous_power_ratio': 0.95,
+            'power_guard_scale': 0.92,
+            'fault_guard_scale': 0.9,
+        }
+        profile = build_step_redirect_guard_profile(initial_budget_n=1800.0, guard=guard, power_ratio_filt=0.98)
+        self.assertLess(profile.fxy_budget_n, 1800.0)
+        self.assertLess(profile.speed_guard_scale, 1.0)
+        self.assertLess(profile.gain_guard_scale, 1.0)
+        self.assertGreaterEqual(profile.power_priority_scale, 0.68)
+        self.assertLess(profile.power_ratio_filt, 0.98)
 
     def test_append_stateful_maneuver_history_updates_common_fields(self):
         st = SimState(x_m=1.0, y_m=2.0, z_m=3.0, vx_mps=4.0, vy_mps=5.0, vz_mps=6.0, yaw_deg=7.0, yaw_rate_deg_s=8.0)

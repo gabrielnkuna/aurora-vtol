@@ -9,7 +9,7 @@ from .dynamics import AllocatorState, ActuatorLimits, PlenumModel
 from .faults import FaultSpec
 from .field import RepelField, repel_force_xy
 from .metrics import time_to_positive_target_projection_s, time_to_track_alignment_s, yaw_track_coupling_mean_abs
-from .maneuver_support import append_stateful_maneuver_history, build_maneuver_health, build_maneuver_state, build_stateful_maneuver_setup, build_turn_geometry, heading_error_deg, smoothstep_local, unit_or_default
+from .maneuver_support import append_stateful_maneuver_history, build_maneuver_health, build_maneuver_state, build_stateful_maneuver_setup, build_step_redirect_guard_profile, build_step_snap_guard_profile, build_turn_geometry, heading_error_deg, smoothstep_local, unit_or_default
 from .model import RingGeometry, net_force_and_yaw_moment, segment_angles_rad, thrust_vectors_body
 from .maneuver_execution import execute_maneuver_step
 from .power_system import PowerSystemParams, apply_power_system, fault_motion_guard, guidance_force_budget, init_hover_power_state
@@ -305,34 +305,23 @@ def run_step_snap_v3(
     for k in range(steps):
         t = k * sim.dt_s
         fxy_budget_n, guard = guidance_force_budget(power_state, state, geom, power, fxy_n, fault=fault)
-        budget_ratio = float(guard["budget_ratio"])
-        speed_guard_scale = 0.38 + 0.62 * smoothstep_local((budget_ratio - 0.25) / 0.75)
-        gain_guard_scale = 0.30 + 0.70 * smoothstep_local((budget_ratio - 0.25) / 0.75)
-        power_pressure = smoothstep_local((guard["continuous_power_ratio"] - 0.88) / 0.12)
-        power_guard_scale = float(guard["power_guard_scale"])
-        snap_power_ratio_filt = 0.92 * snap_power_ratio_filt + 0.08 * float(guard["continuous_power_ratio"])
-        power_priority_scale = 1.0 - 0.32 * smoothstep_local((snap_power_ratio_filt - 0.94) / 0.08)
-        power_priority_scale = float(np.clip(power_priority_scale, 0.66, 1.0))
-        dead_align_scale = float(guard["dead_align_scale"])
-        dead_cross_scale = float(guard["dead_cross_scale"])
-        dead_align_speed_floor_mps = float(guard["dead_align_speed_floor_mps"])
-        plenum_power_trim = float(guard["plenum_power_trim"])
-        plenum_revector_trim = float(guard["plenum_revector_trim"])
-        plenum_align_speed_floor_mps = float(guard["plenum_align_speed_floor_mps"])
-        plenum_brake_trim = float(guard["plenum_brake_trim"])
-        speed_guard_scale *= 1.0 - 0.18 * power_pressure
-        gain_guard_scale *= 1.0 - 0.24 * power_pressure
-        speed_guard_scale *= 0.78 + 0.22 * power_guard_scale
-        gain_guard_scale *= 0.70 + 0.30 * power_guard_scale
-        speed_guard_scale *= 0.72 + 0.28 * power_priority_scale
-        gain_guard_scale *= 0.62 + 0.38 * power_priority_scale
-        speed_guard_scale *= float(guard["fault_guard_scale"])
-        gain_guard_scale *= float(guard["fault_guard_scale"])
-        speed_guard_scale *= plenum_power_trim
-        gain_guard_scale *= plenum_power_trim
-        fxy_budget_n *= 0.82 + 0.18 * power_guard_scale
-        fxy_budget_n *= 0.70 + 0.30 * power_priority_scale
-        fxy_budget_n *= plenum_power_trim
+        snap_guard_profile = build_step_snap_guard_profile(
+            initial_budget_n=fxy_budget_n,
+            guard=guard,
+            power_ratio_filt=snap_power_ratio_filt,
+        )
+        fxy_budget_n = snap_guard_profile.fxy_budget_n
+        speed_guard_scale = snap_guard_profile.speed_guard_scale
+        gain_guard_scale = snap_guard_profile.gain_guard_scale
+        power_priority_scale = snap_guard_profile.power_priority_scale
+        snap_power_ratio_filt = snap_guard_profile.power_ratio_filt
+        dead_align_scale = snap_guard_profile.dead_align_scale
+        dead_cross_scale = snap_guard_profile.dead_cross_scale
+        dead_align_speed_floor_mps = snap_guard_profile.dead_align_speed_floor_mps
+        plenum_power_trim = snap_guard_profile.plenum_power_trim
+        plenum_revector_trim = snap_guard_profile.plenum_revector_trim
+        plenum_align_speed_floor_mps = snap_guard_profile.plenum_align_speed_floor_mps
+        plenum_brake_trim = snap_guard_profile.plenum_brake_trim
 
         maneuver_state = build_maneuver_state(st, power_state, guard)
         maneuver_health = build_maneuver_health(fxy_budget_n=fxy_budget_n, guard=guard)
@@ -679,24 +668,16 @@ def run_step_redirect_v3(
     for k in range(steps):
         t = k * sim.dt_s
         fxy_budget_n, guard = guidance_force_budget(power_state, state, geom, power, fxy_n, fault=fault)
-        budget_ratio = float(guard["budget_ratio"])
-        speed_guard_scale = 0.40 + 0.60 * smoothstep_local((budget_ratio - 0.25) / 0.75)
-        gain_guard_scale = 0.34 + 0.66 * smoothstep_local((budget_ratio - 0.25) / 0.75)
-        power_pressure = smoothstep_local((guard["continuous_power_ratio"] - 0.88) / 0.12)
-        power_guard_scale = float(guard["power_guard_scale"])
-        redirect_power_ratio_filt = 0.92 * redirect_power_ratio_filt + 0.08 * float(guard["continuous_power_ratio"])
-        power_priority_scale = 1.0 - 0.30 * smoothstep_local((redirect_power_ratio_filt - 0.94) / 0.08)
-        power_priority_scale = float(np.clip(power_priority_scale, 0.68, 1.0))
-        speed_guard_scale *= 1.0 - 0.18 * power_pressure
-        gain_guard_scale *= 1.0 - 0.24 * power_pressure
-        speed_guard_scale *= 0.78 + 0.22 * power_guard_scale
-        gain_guard_scale *= 0.70 + 0.30 * power_guard_scale
-        speed_guard_scale *= 0.72 + 0.28 * power_priority_scale
-        gain_guard_scale *= 0.62 + 0.38 * power_priority_scale
-        speed_guard_scale *= float(guard["fault_guard_scale"])
-        gain_guard_scale *= float(guard["fault_guard_scale"])
-        fxy_budget_n *= 0.82 + 0.18 * power_guard_scale
-        fxy_budget_n *= 0.70 + 0.30 * power_priority_scale
+        redirect_guard_profile = build_step_redirect_guard_profile(
+            initial_budget_n=fxy_budget_n,
+            guard=guard,
+            power_ratio_filt=redirect_power_ratio_filt,
+        )
+        fxy_budget_n = redirect_guard_profile.fxy_budget_n
+        speed_guard_scale = redirect_guard_profile.speed_guard_scale
+        gain_guard_scale = redirect_guard_profile.gain_guard_scale
+        power_priority_scale = redirect_guard_profile.power_priority_scale
+        redirect_power_ratio_filt = redirect_guard_profile.power_ratio_filt
 
         if k < step_idx:
             phase = "A"

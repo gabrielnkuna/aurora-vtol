@@ -44,6 +44,31 @@ class TurnGeometry:
     turn_ratio: float
 
 
+@dataclass(frozen=True)
+class StepSnapGuardProfile:
+    fxy_budget_n: float
+    speed_guard_scale: float
+    gain_guard_scale: float
+    power_priority_scale: float
+    power_ratio_filt: float
+    dead_align_scale: float
+    dead_cross_scale: float
+    dead_align_speed_floor_mps: float
+    plenum_power_trim: float
+    plenum_revector_trim: float
+    plenum_align_speed_floor_mps: float
+    plenum_brake_trim: float
+
+
+@dataclass(frozen=True)
+class StepRedirectGuardProfile:
+    fxy_budget_n: float
+    speed_guard_scale: float
+    gain_guard_scale: float
+    power_priority_scale: float
+    power_ratio_filt: float
+
+
 def heading_error_deg(a_deg: float, b_deg: float) -> float:
     d = (a_deg - b_deg + 180.0) % 360.0 - 180.0
     return abs(d)
@@ -151,6 +176,85 @@ def build_maneuver_health(*, fxy_budget_n: float, guard: Mapping[str, float]) ->
         supply_scale_pct=100.0 * float(guard["supply_guard_scale"]),
         fault_available_scale=float(guard["fault_available_scale"]),
         fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
+    )
+
+
+def build_step_snap_guard_profile(
+    *,
+    initial_budget_n: float,
+    guard: Mapping[str, float],
+    power_ratio_filt: float,
+) -> StepSnapGuardProfile:
+    budget_ratio = float(guard["budget_ratio"])
+    speed_guard_scale = 0.38 + 0.62 * smoothstep_local((budget_ratio - 0.25) / 0.75)
+    gain_guard_scale = 0.30 + 0.70 * smoothstep_local((budget_ratio - 0.25) / 0.75)
+    power_pressure = smoothstep_local((float(guard["continuous_power_ratio"]) - 0.88) / 0.12)
+    power_guard_scale = float(guard["power_guard_scale"])
+    next_power_ratio_filt = 0.92 * power_ratio_filt + 0.08 * float(guard["continuous_power_ratio"])
+    power_priority_scale = 1.0 - 0.32 * smoothstep_local((next_power_ratio_filt - 0.94) / 0.08)
+    power_priority_scale = float(np.clip(power_priority_scale, 0.66, 1.0))
+    plenum_power_trim = float(guard["plenum_power_trim"])
+    speed_guard_scale *= 1.0 - 0.18 * power_pressure
+    gain_guard_scale *= 1.0 - 0.24 * power_pressure
+    speed_guard_scale *= 0.78 + 0.22 * power_guard_scale
+    gain_guard_scale *= 0.70 + 0.30 * power_guard_scale
+    speed_guard_scale *= 0.72 + 0.28 * power_priority_scale
+    gain_guard_scale *= 0.62 + 0.38 * power_priority_scale
+    speed_guard_scale *= float(guard["fault_guard_scale"])
+    gain_guard_scale *= float(guard["fault_guard_scale"])
+    speed_guard_scale *= plenum_power_trim
+    gain_guard_scale *= plenum_power_trim
+    fxy_budget_n = initial_budget_n
+    fxy_budget_n *= 0.82 + 0.18 * power_guard_scale
+    fxy_budget_n *= 0.70 + 0.30 * power_priority_scale
+    fxy_budget_n *= plenum_power_trim
+    return StepSnapGuardProfile(
+        fxy_budget_n=fxy_budget_n,
+        speed_guard_scale=speed_guard_scale,
+        gain_guard_scale=gain_guard_scale,
+        power_priority_scale=power_priority_scale,
+        power_ratio_filt=next_power_ratio_filt,
+        dead_align_scale=float(guard["dead_align_scale"]),
+        dead_cross_scale=float(guard["dead_cross_scale"]),
+        dead_align_speed_floor_mps=float(guard["dead_align_speed_floor_mps"]),
+        plenum_power_trim=plenum_power_trim,
+        plenum_revector_trim=float(guard["plenum_revector_trim"]),
+        plenum_align_speed_floor_mps=float(guard["plenum_align_speed_floor_mps"]),
+        plenum_brake_trim=float(guard["plenum_brake_trim"]),
+    )
+
+
+def build_step_redirect_guard_profile(
+    *,
+    initial_budget_n: float,
+    guard: Mapping[str, float],
+    power_ratio_filt: float,
+) -> StepRedirectGuardProfile:
+    budget_ratio = float(guard["budget_ratio"])
+    speed_guard_scale = 0.40 + 0.60 * smoothstep_local((budget_ratio - 0.25) / 0.75)
+    gain_guard_scale = 0.34 + 0.66 * smoothstep_local((budget_ratio - 0.25) / 0.75)
+    power_pressure = smoothstep_local((float(guard["continuous_power_ratio"]) - 0.88) / 0.12)
+    power_guard_scale = float(guard["power_guard_scale"])
+    next_power_ratio_filt = 0.92 * power_ratio_filt + 0.08 * float(guard["continuous_power_ratio"])
+    power_priority_scale = 1.0 - 0.30 * smoothstep_local((next_power_ratio_filt - 0.94) / 0.08)
+    power_priority_scale = float(np.clip(power_priority_scale, 0.68, 1.0))
+    speed_guard_scale *= 1.0 - 0.18 * power_pressure
+    gain_guard_scale *= 1.0 - 0.24 * power_pressure
+    speed_guard_scale *= 0.78 + 0.22 * power_guard_scale
+    gain_guard_scale *= 0.70 + 0.30 * power_guard_scale
+    speed_guard_scale *= 0.72 + 0.28 * power_priority_scale
+    gain_guard_scale *= 0.62 + 0.38 * power_priority_scale
+    speed_guard_scale *= float(guard["fault_guard_scale"])
+    gain_guard_scale *= float(guard["fault_guard_scale"])
+    fxy_budget_n = initial_budget_n
+    fxy_budget_n *= 0.82 + 0.18 * power_guard_scale
+    fxy_budget_n *= 0.70 + 0.30 * power_priority_scale
+    return StepRedirectGuardProfile(
+        fxy_budget_n=fxy_budget_n,
+        speed_guard_scale=speed_guard_scale,
+        gain_guard_scale=gain_guard_scale,
+        power_priority_scale=power_priority_scale,
+        power_ratio_filt=next_power_ratio_filt,
     )
 
 
