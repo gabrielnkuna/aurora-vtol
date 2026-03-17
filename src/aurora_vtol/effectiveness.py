@@ -264,6 +264,39 @@ def build_seeded_effectiveness_table(topology: RingActuatorTopology) -> NominalE
     )
 
 
+def effectiveness_table_for_topology(topology: RingActuatorTopology) -> NominalEffectivenessTable:
+    if int(topology.segment_count) <= 0:
+        raise ValueError(f"topology segment_count must be positive, got {topology.segment_count}")
+    if topology == default_ring_topology(topology.segment_count):
+        return default_effectiveness_table(topology.segment_count)
+    return build_seeded_effectiveness_table(topology)
+
+
+def resolve_effectiveness_table(
+    segment_count: int,
+    *,
+    topology: RingActuatorTopology | None = None,
+    effectiveness: NominalEffectivenessTable | None = None,
+) -> NominalEffectivenessTable:
+    count = int(segment_count)
+    active_topology = default_ring_topology(count) if topology is None else topology
+    if int(active_topology.segment_count) != count:
+        raise ValueError(
+            f"topology segment_count {active_topology.segment_count} != requested segment_count {count}"
+        )
+    if effectiveness is not None:
+        if int(effectiveness.segment_count) != count:
+            raise ValueError(
+                f"effectiveness segment_count {effectiveness.segment_count} != requested segment_count {count}"
+            )
+        if int(effectiveness.fan_count) != int(active_topology.fan_count):
+            raise ValueError(
+                f"effectiveness fan_count {effectiveness.fan_count} != topology fan_count {active_topology.fan_count}"
+            )
+        return effectiveness
+    return effectiveness_table_for_topology(active_topology)
+
+
 @lru_cache(maxsize=8)
 def default_effectiveness_table(segment_count: int) -> NominalEffectivenessTable:
     count = int(segment_count)

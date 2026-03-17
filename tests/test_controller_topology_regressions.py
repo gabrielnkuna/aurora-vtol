@@ -11,7 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from aurora_vtol.icd import ActuatorHealthState, EstimatedVehicleState, RedirectTarget
 from aurora_vtol.topology import RingActuatorTopology
 from aurora_vtol.vehicle_controller import command_directional_force, track_redirect_velocity
+from aurora_vtol.effectiveness import NominalEffectivenessTable
 from aurora_vtol.allocator.faults import FaultSpec, apply_faults_to_thrust
+from aurora_vtol.allocator.allocate import AllocationRequest, allocate_v1, allocate_v2
+from aurora_vtol.allocator.model import RingGeometry
 
 
 class ControllerTopologyRegressionTests(unittest.TestCase):
@@ -95,6 +98,56 @@ class ControllerTopologyRegressionTests(unittest.TestCase):
                 np.array([10.0, 10.0, 10.0], dtype=float),
                 FaultSpec(dead_fan_group=0, dead_fan_scale=0.0),
                 topology=topology,
+            )
+
+    def test_allocate_v1_uses_explicit_effectiveness(self) -> None:
+        topology = RingActuatorTopology.even_pairs(4)
+        effectiveness = NominalEffectivenessTable(
+            schema_version="test.v1",
+            table_name="zero-radial",
+            segment_count=4,
+            fan_count=topology.fan_count,
+            plenum_count=len(topology.plenum_to_segments),
+            fan_segment_weights=np.asarray(topology.fan_segment_influence, dtype=float),
+            plenum_segment_weights=np.eye(4, dtype=float),
+            axial_scale_by_segment=np.ones(4, dtype=float),
+            radial_scale_by_segment=np.zeros(4, dtype=float),
+            tangential_scale_by_segment=np.ones(4, dtype=float),
+            provenance="test",
+        )
+        alloc = allocate_v1(
+            RingGeometry(n_segments=4),
+            AllocationRequest(fx_n=120.0, fy_n=0.0, fz_n=40.0),
+            topology=topology,
+            effectiveness=effectiveness,
+        )
+        self.assertAlmostEqual(float(alloc.net_force_n[0]), 0.0, places=6)
+        self.assertAlmostEqual(float(alloc.net_force_n[1]), 0.0, places=6)
+
+    def test_allocate_v2_fault_path_uses_explicit_topology(self) -> None:
+        topology = RingActuatorTopology(
+            segment_count=4,
+            fan_to_segments=((0,), (1, 2, 3)),
+            plenum_to_segments=((0,), (1,), (2,), (3,)),
+            fan_nominal_sigma_segments=0.0,
+            fan_fault_sigma_segments=0.0,
+            plenum_fault_sigma_segments=0.0,
+        )
+        alloc = allocate_v2(
+            RingGeometry(n_segments=4),
+            AllocationRequest(fx_n=0.0, fy_n=0.0, fz_n=40.0),
+            fault=FaultSpec(dead_fan_group=1, dead_fan_scale=0.0),
+            topology=topology,
+        )
+        self.assertGreater(float(alloc.thrust_per_seg_n[0]), 0.0)
+        self.assertListEqual(alloc.thrust_per_seg_n[1:].tolist(), [0.0, 0.0, 0.0])
+
+    def test_allocate_v1_topology_geometry_mismatch_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            allocate_v1(
+                RingGeometry(n_segments=4),
+                AllocationRequest(fx_n=0.0, fy_n=0.0, fz_n=40.0),
+                topology=RingActuatorTopology.aurora_ring_32(),
             )
 
 

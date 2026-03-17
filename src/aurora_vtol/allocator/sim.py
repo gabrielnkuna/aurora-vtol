@@ -13,6 +13,7 @@ from .faults import FaultSpec, apply_command_faults_to_alpha, apply_faults_to_al
 from .trace import save_trace_json
 from ..icd import ActuatorHealthState, EstimatedVehicleState, GuidanceTarget, RedirectTarget
 from ..topology import default_ring_topology
+from ..effectiveness import effectiveness_table_for_topology
 from ..vehicle_controller import XYVehicleControllerGains, command_directional_force, track_redirect_velocity, track_step_snap_brake, track_step_snap_reverse, track_xy_position
 
 @dataclass(frozen=True)
@@ -750,6 +751,8 @@ def run_demo(dir_deg: float, fxy_n: float, duration_s: float, yaw_hold_deg: floa
     fy_cmd = fxy_n * math.sin(phi)
     fz_cmd = sim.mass_kg * sim.gravity
     theta = segment_angles_rad(geom.n_segments)
+    topology = default_ring_topology(geom.n_segments)
+    effectiveness = effectiveness_table_for_topology(topology)
 
     for k in range(steps):
         t = k * sim.dt_s
@@ -757,11 +760,11 @@ def run_demo(dir_deg: float, fxy_n: float, duration_s: float, yaw_hold_deg: floa
         # allocate using the chosen allocator version; v1 does not compute tangential forces
         # and therefore has no ft_tan_per_seg_n attribute.
         if version.lower() == "v1":
-            alloc = allocate_v1(geom, req)
+            alloc = allocate_v1(geom, req, topology=topology, effectiveness=effectiveness)
             ft_rms = 0.0
             ft_vals = [0.0] * geom.n_segments
         else:
-            alloc = allocate_v2(geom, req)
+            alloc = allocate_v2(geom, req, topology=topology, effectiveness=effectiveness)
             ft_rms = float(np.sqrt(np.mean(alloc.ft_tan_per_seg_n ** 2)))
             ft_vals = list(alloc.ft_tan_per_seg_n)
 
@@ -820,6 +823,7 @@ def run_step_test_v3(dir_deg_a: float = 0.0, dir_deg_b: float = 180.0, fxy_n: fl
     step_k = int(step_time_s / sim.dt_s)
     theta = segment_angles_rad(geom.n_segments)
     topology = default_ring_topology(geom.n_segments)
+    effectiveness = effectiveness_table_for_topology(topology)
     fz_cmd = sim.mass_kg * sim.gravity
 
     hist = {"t": [], "x": [], "y": [], "z": [], "vx": [], "vy": [], "vz": [], "yaw_deg": [], "yaw_rate_deg_s": [], "mz_est": [], "alpha_deg_rms": [], "ft_tan_rms": [], "speed": [], "cmd_dir_deg": [], "alpha_deg_32": [], "ft_tan_32": [], "fan_thrust_16": []}
@@ -831,7 +835,7 @@ def run_step_test_v3(dir_deg_a: float = 0.0, dir_deg_b: float = 180.0, fxy_n: fl
         fx_cmd = fxy_n * math.cos(phi)
         fy_cmd = fxy_n * math.sin(phi)
 
-        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault)
+        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault, topology=topology, effectiveness=effectiveness)
         alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
         thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
         ft_target = alloc.ft_tan_per_seg_n
@@ -971,6 +975,8 @@ def run_step_snap_v3(
     snap_end_idx = int((step_time_s + snap_stop_s) / sim.dt_s)
 
     theta = segment_angles_rad(geom.n_segments)
+    topology = default_ring_topology(geom.n_segments)
+    effectiveness = effectiveness_table_for_topology(topology)
     fz_cmd = sim.mass_kg * sim.gravity
 
     hist = {
@@ -1178,7 +1184,7 @@ def run_step_snap_v3(
         fx_cmd, fy_cmd = rate_limit_xy_force(command_fx_prev, command_fy_prev, fx_raw, fy_raw, command_rate_active_n_s, sim.dt_s)
         command_fx_prev, command_fy_prev = fx_cmd, fy_cmd
 
-        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault)
+        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault, topology=topology, effectiveness=effectiveness)
         alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
         thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
         ft_target = alloc.ft_tan_per_seg_n
@@ -1402,6 +1408,8 @@ def run_step_redirect_v3(
     redirect_end_idx = int((step_time_s + redirect_time_s) / sim.dt_s)
 
     theta = segment_angles_rad(geom.n_segments)
+    topology = default_ring_topology(geom.n_segments)
+    effectiveness = effectiveness_table_for_topology(topology)
     fz_cmd = sim.mass_kg * sim.gravity
 
     hist = {
@@ -1544,7 +1552,7 @@ def run_step_redirect_v3(
         fx_cmd, fy_cmd = rate_limit_xy_force(command_fx_prev, command_fy_prev, fx_raw, fy_raw, command_rate_active_n_s, sim.dt_s)
         command_fx_prev, command_fy_prev = fx_cmd, fy_cmd
 
-        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault)
+        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault, topology=topology, effectiveness=effectiveness)
         alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
         thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
         ft_target = alloc.ft_tan_per_seg_n
@@ -1734,6 +1742,7 @@ def run_coordinate_mission_v5(
     steps = int(total_s / sim.dt_s)
     theta = segment_angles_rad(geom.n_segments)
     topology = default_ring_topology(geom.n_segments)
+    effectiveness = effectiveness_table_for_topology(topology)
     fz_cmd = sim.mass_kg * sim.gravity
     transit_alt_m = max(cruise_alt_m, start_z_m, dest_z_m)
     planner_clearance_m = max(4.0, arrival_radius_m * 2.0)
@@ -1915,7 +1924,7 @@ def run_coordinate_mission_v5(
         else:
             phase = "cruise"
 
-        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault)
+        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault, topology=topology, effectiveness=effectiveness)
         alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
         thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
         ft_target = alloc.ft_tan_per_seg_n
@@ -2100,6 +2109,7 @@ def run_repel_test_v4(obstacle_x_m: float = 30.0, obstacle_y_m: float = 0.0, ini
     fz_cmd = sim.mass_kg * sim.gravity
     theta = segment_angles_rad(geom.n_segments)
     topology = default_ring_topology(geom.n_segments)
+    effectiveness = effectiveness_table_for_topology(topology)
 
     hist = {"t": [], "x": [], "y": [], "z": [], "vx": [], "vy": [], "vz": [], "speed": [], "yaw_deg": [], "yaw_rate_deg_s": [], "fx_cmd": [], "fy_cmd": [], "dist_to_obstacle": [], "mz_est": [], "alpha_deg_rms": [], "ft_tan_rms": [], "alpha_deg_32": [], "ft_tan_32": [], "faults": [], "fan_thrust_16": []}
 
@@ -2108,7 +2118,7 @@ def run_repel_test_v4(obstacle_x_m: float = 30.0, obstacle_y_m: float = 0.0, ini
         dist = float(math.hypot(st.x_m - obstacle_x_m, st.y_m - obstacle_y_m))
         fx_cmd, fy_cmd = repel_force_xy(field, st.x_m, st.y_m, obstacle_x_m, obstacle_y_m)
 
-        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault)
+        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault, topology=topology, effectiveness=effectiveness)
         alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
         thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
         ft_target = alloc.ft_tan_per_seg_n

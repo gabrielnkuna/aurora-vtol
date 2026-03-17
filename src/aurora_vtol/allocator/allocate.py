@@ -5,8 +5,8 @@ import numpy as np
 
 from .model import RingGeometry, segment_angles_rad, thrust_vectors_body, net_force_and_yaw_moment
 from .faults import FaultSpec
-from ..topology import default_ring_topology
-from ..effectiveness import default_effectiveness_table
+from ..topology import RingActuatorTopology, default_ring_topology
+from ..effectiveness import NominalEffectivenessTable, resolve_effectiveness_table
 
 @dataclass(frozen=True)
 class AllocationRequest:
@@ -41,8 +41,19 @@ def _fault_has_effect(fault: FaultSpec | None) -> bool:
     ))
 
 
-def _segment_fault_scales(n: int, fault: FaultSpec | None) -> np.ndarray:
-    topology = default_ring_topology(n)
+def _resolve_allocation_topology(
+    geom: RingGeometry,
+    topology: RingActuatorTopology | None = None,
+) -> RingActuatorTopology:
+    active_topology = default_ring_topology(geom.n_segments) if topology is None else topology
+    if int(active_topology.segment_count) != int(geom.n_segments):
+        raise ValueError(
+            f"allocation topology segment_count {active_topology.segment_count} != geometry n_segments {geom.n_segments}"
+        )
+    return active_topology
+
+
+def _segment_fault_scales(topology: RingActuatorTopology, fault: FaultSpec | None) -> np.ndarray:
     return topology.segment_effectiveness_scales(fault)
 
 
@@ -76,8 +87,13 @@ def _solve_radial_components_limited(theta: np.ndarray, target_xy: np.ndarray, c
     return radial
 
 
-def _expected_nominal_forces(geom: RingGeometry, thrust_cmd: np.ndarray, alpha_cmd: np.ndarray, dir_rad: np.ndarray) -> np.ndarray:
-    eff = default_effectiveness_table(geom.n_segments)
+def _expected_nominal_forces(
+    geom: RingGeometry,
+    thrust_cmd: np.ndarray,
+    alpha_cmd: np.ndarray,
+    dir_rad: np.ndarray,
+    eff: NominalEffectivenessTable,
+) -> np.ndarray:
     thrust_arr = np.asarray(thrust_cmd, dtype=float)
     alpha_arr = np.asarray(alpha_cmd, dtype=float)
     dir_arr = np.asarray(dir_rad, dtype=float)
@@ -90,10 +106,15 @@ def _expected_nominal_forces(geom: RingGeometry, thrust_cmd: np.ndarray, alpha_c
     return np.stack([fx, fy, z_eff], axis=1)
 
 
-def _allocate_with_faults(geom: RingGeometry, req: AllocationRequest, fault: FaultSpec) -> AllocationResultV2:
+def _allocate_with_faults(
+    geom: RingGeometry,
+    req: AllocationRequest,
+    fault: FaultSpec,
+    topology: RingActuatorTopology,
+) -> AllocationResultV2:
     n = geom.n_segments
     theta = segment_angles_rad(n)
-    thrust_scale = _segment_fault_scales(n, fault)
+    thrust_scale = _segment_fault_scales(topology, fault)
     active = thrust_scale > 1e-6
     if not np.any(active):
         zero = np.zeros(n, dtype=float)
@@ -175,9 +196,17 @@ def _allocate_with_faults(geom: RingGeometry, req: AllocationRequest, fault: Fau
         ft_tan_per_seg_n=ft_cmd,
     )
 
-def allocate_v1(geom: RingGeometry, req: AllocationRequest) -> AllocationResult:
+def allocate_v1(
+    geom: RingGeometry,
+    req: AllocationRequest,
+    *,
+    topology: RingActuatorTopology | None = None,
+    effectiveness: NominalEffectivenessTable | None = None,
+) -> AllocationResult:
     n = geom.n_segments
     theta = segment_angles_rad(n)
+    active_topology = _resolve_allocation_topology(geom, topology)
+    eff = resolve_effectiveness_table(n, topology=active_topology, effectiveness=effectiveness)
     fxy = math.hypot(req.fx_n, req.fy_n)
     thrust_base = req.fz_n / n
 
@@ -185,14 +214,13 @@ def allocate_v1(geom: RingGeometry, req: AllocationRequest) -> AllocationResult:
         thrust = np.full(n, thrust_base, dtype=float)
         alpha = np.zeros(n, dtype=float)
         dirr = theta.copy()
-        forces = _expected_nominal_forces(geom, thrust, alpha, dirr)
+        forces = _expected_nominal_forces(geom, thrust, alpha, dirr, eff)
         net, mz = net_force_and_yaw_moment(geom, forces)
         return AllocationResult(thrust, alpha, dirr, net, mz, "hover-only + nominal topology smoothing")
 
     phi = math.atan2(req.fy_n, req.fx_n)
     pattern = np.cos(theta - phi)
     alpha_max = math.radians(geom.alpha_max_deg)
-    eff = default_effectiveness_table(n)
 
     def fxy_for_k(k: float) -> float:
         a = clamp(k * pattern, -alpha_max, alpha_max)
@@ -213,15 +241,24 @@ def allocate_v1(geom: RingGeometry, req: AllocationRequest) -> AllocationResult:
     alpha = clamp(hi * pattern, -alpha_max, alpha_max)
     thrust = np.full(n, thrust_base, dtype=float)
     dirr = theta.copy()
-    forces = _expected_nominal_forces(geom, thrust, alpha, dirr)
+    forces = _expected_nominal_forces(geom, thrust, alpha, dirr, eff)
     net, mz = net_force_and_yaw_moment(geom, forces)
     return AllocationResult(thrust, alpha, dirr, net, mz, "V1: cosine alpha distribution + nominal topology smoothing")
 
-def allocate_v2(geom: RingGeometry, req: AllocationRequest, fault: FaultSpec | None = None) -> AllocationResultV2:
+def allocate_v2(
+    geom: RingGeometry,
+    req: AllocationRequest,
+    fault: FaultSpec | None = None,
+    *,
+    topology: RingActuatorTopology | None = None,
+    effectiveness: NominalEffectivenessTable | None = None,
+) -> AllocationResultV2:
+    active_topology = _resolve_allocation_topology(geom, topology)
+    eff = resolve_effectiveness_table(geom.n_segments, topology=active_topology, effectiveness=effectiveness)
     if _fault_has_effect(fault):
-        return _allocate_with_faults(geom, req, fault or FaultSpec())
+        return _allocate_with_faults(geom, req, fault or FaultSpec(), active_topology)
 
-    v1 = allocate_v1(geom, req)
+    v1 = allocate_v1(geom, req, topology=active_topology, effectiveness=eff)
     n = geom.n_segments
     R = geom.radius_m
     thrust = v1.thrust_per_seg_n
@@ -234,13 +271,12 @@ def allocate_v2(geom: RingGeometry, req: AllocationRequest, fault: FaultSpec | N
     ft = np.clip(ft, -0.20 * thrust, 0.20 * thrust)
 
     theta = segment_angles_rad(n)
-    eff = default_effectiveness_table(n)
     ft_eff = eff.apply_tangential_effectiveness(ft)
     fx_t = ft_eff * (-np.sin(theta))
     fy_t = ft_eff * (np.cos(theta))
     f_tan = np.stack([fx_t, fy_t, np.zeros(n, dtype=float)], axis=1)
 
-    forces_v1 = _expected_nominal_forces(geom, v1.thrust_per_seg_n, v1.alpha_rad, v1.dir_rad)
+    forces_v1 = _expected_nominal_forces(geom, v1.thrust_per_seg_n, v1.alpha_rad, v1.dir_rad, eff)
     forces = forces_v1 + f_tan
     net, mz = net_force_and_yaw_moment(geom, forces)
 
