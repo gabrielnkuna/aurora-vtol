@@ -5,8 +5,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .power_system import smoothstep01
-from .sim_runtime import clip_force_xy, rate_limit_xy_force
+from .dynamics import AllocatorState, ActuatorLimits, PlenumModel
+from .faults import FaultSpec
+from .mission_planning import MissionObstacle, plan_route_waypoints
+from .model import RingGeometry, segment_angles_rad
+from .power_system import PowerSystemParams, init_hover_power_state, smoothstep01
+from .sim_runtime import SimParams, SimState, clip_force_xy, rate_limit_xy_force
+from ..effectiveness import effectiveness_table_for_topology
+from ..topology import default_ring_topology
 from ..icd import ActuatorHealthState, EstimatedVehicleState, GuidanceTarget
 from ..vehicle_controller import XYVehicleControllerGains, track_xy_position
 
@@ -46,6 +52,114 @@ class CoordinateArrivalState:
     command_fx_prev: float
     command_fy_prev: float
     phase: str
+
+
+@dataclass(frozen=True)
+class CoordinateMissionSetup:
+    geom: RingGeometry
+    sim: SimParams
+    power: PowerSystemParams
+    power_state: object
+    lim: ActuatorLimits
+    pl: PlenumModel
+    obstacles: list[MissionObstacle]
+    fault: FaultSpec
+    st: SimState
+    allocator_state: AllocatorState
+    steps: int
+    theta_rad: np.ndarray
+    topology: object
+    effectiveness: object
+    fz_cmd: float
+    transit_alt_m: float
+    planner_clearance_m: float
+    route_xy: list[tuple[float, float]]
+    goal_idx: int
+    command_rate_n_s: float
+    command_fx_prev: float
+    command_fy_prev: float
+    controller_gains: XYVehicleControllerGains
+    hist: dict[str, list]
+    arrival_time_s: float | None
+    hold_start_s: float | None
+
+
+def build_coordinate_mission_setup(
+    *,
+    dest_x_m: float,
+    dest_y_m: float,
+    dest_z_m: float,
+    start_x_m: float,
+    start_y_m: float,
+    start_z_m: float,
+    total_s: float,
+    yaw_hold_deg: float,
+    cruise_alt_m: float,
+    arrival_radius_m: float,
+    pos_k_n_per_m: float,
+    vel_k_n_per_mps: float,
+    obstacles: list[MissionObstacle] | None,
+    geom,
+    sim,
+    lim: ActuatorLimits | None,
+    pl: PlenumModel | None,
+    power: PowerSystemParams | None,
+    fault: FaultSpec | None,
+) -> CoordinateMissionSetup:
+    geom = geom or RingGeometry()
+    sim = sim or SimParams()
+    power = power or PowerSystemParams()
+    power_state = init_hover_power_state(power, geom, sim)
+    lim = lim or ActuatorLimits()
+    pl = pl or PlenumModel()
+    obstacles = obstacles or []
+    fault = fault or FaultSpec()
+
+    st = SimState(x_m=start_x_m, y_m=start_y_m, z_m=start_z_m, yaw_deg=yaw_hold_deg)
+    allocator_state = AllocatorState.init(geom.n_segments)
+    steps = int(total_s / sim.dt_s)
+    theta_rad = segment_angles_rad(geom.n_segments)
+    topology = default_ring_topology(geom.n_segments)
+    effectiveness = effectiveness_table_for_topology(topology)
+    fz_cmd = sim.mass_kg * sim.gravity
+    transit_alt_m = max(cruise_alt_m, start_z_m, dest_z_m)
+    planner_clearance_m = max(4.0, arrival_radius_m * 2.0)
+    route_xy = plan_route_waypoints(start_x_m, start_y_m, dest_x_m, dest_y_m, obstacles, planner_clearance_m)
+    goal_idx = 1 if len(route_xy) > 1 else 0
+    command_rate_n_s = 9000.0
+    controller_gains = XYVehicleControllerGains(
+        pos_k_n_per_m=pos_k_n_per_m,
+        vel_k_n_per_mps=vel_k_n_per_mps,
+    )
+
+    return CoordinateMissionSetup(
+        geom=geom,
+        sim=sim,
+        power=power,
+        power_state=power_state,
+        lim=lim,
+        pl=pl,
+        obstacles=obstacles,
+        fault=fault,
+        st=st,
+        allocator_state=allocator_state,
+        steps=steps,
+        theta_rad=theta_rad,
+        topology=topology,
+        effectiveness=effectiveness,
+        fz_cmd=fz_cmd,
+        transit_alt_m=transit_alt_m,
+        planner_clearance_m=planner_clearance_m,
+        route_xy=route_xy,
+        goal_idx=goal_idx,
+        command_rate_n_s=command_rate_n_s,
+        command_fx_prev=0.0,
+        command_fy_prev=0.0,
+        controller_gains=controller_gains,
+        hist=build_coordinate_history(),
+        arrival_time_s=None,
+        hold_start_s=None,
+    )
 
 
 def build_coordinate_history() -> dict[str, list]:

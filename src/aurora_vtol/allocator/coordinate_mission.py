@@ -5,22 +5,18 @@ import math
 from .coordinate_execution import append_coordinate_step_history, execute_coordinate_step
 from .coordinate_support import (
     advance_route_goal,
-    build_coordinate_history,
+    build_coordinate_mission_setup,
     build_coordinate_output,
     classify_coordinate_phase,
     compute_coordinate_guidance_command,
     resolve_coordinate_arrival_state,
     resolve_route_goal,
 )
-from .dynamics import AllocatorState, ActuatorLimits, PlenumModel
+from .dynamics import ActuatorLimits, PlenumModel
 from .faults import FaultSpec
-from .mission_planning import MissionObstacle, mission_safety_force, plan_route_waypoints
-from .model import RingGeometry, segment_angles_rad
-from .power_system import PowerSystemParams, guidance_force_budget, init_hover_power_state
-from .sim_runtime import SimParams, SimState
-from ..effectiveness import effectiveness_table_for_topology, hardware_assumptions_payload
-from ..topology import default_ring_topology
-from ..vehicle_controller import XYVehicleControllerGains
+from .mission_planning import MissionObstacle, mission_safety_force
+from .power_system import PowerSystemParams, guidance_force_budget
+from ..effectiveness import hardware_assumptions_payload
 
 
 def run_coordinate_mission_v5(
@@ -50,40 +46,54 @@ def run_coordinate_mission_v5(
     power: PowerSystemParams | None = None,
     fault: FaultSpec | None = None,
 ):
-    geom = geom or RingGeometry()
-    sim = sim or SimParams()
-    power = power or PowerSystemParams()
-    power_state = init_hover_power_state(power, geom, sim)
-    lim = lim or ActuatorLimits()
-    pl = pl or PlenumModel()
-    obstacles = obstacles or []
-    fault = fault or FaultSpec()
-
-    st = SimState(x_m=start_x_m, y_m=start_y_m, z_m=start_z_m, yaw_deg=yaw_hold_deg)
-    allocator_state = AllocatorState.init(geom.n_segments)
-
-    steps = int(total_s / sim.dt_s)
-    theta = segment_angles_rad(geom.n_segments)
-    topology = default_ring_topology(geom.n_segments)
-    effectiveness = effectiveness_table_for_topology(topology)
-    fz_cmd = sim.mass_kg * sim.gravity
-    transit_alt_m = max(cruise_alt_m, start_z_m, dest_z_m)
-    planner_clearance_m = max(4.0, arrival_radius_m * 2.0)
-    route_xy = plan_route_waypoints(start_x_m, start_y_m, dest_x_m, dest_y_m, obstacles, planner_clearance_m)
-    goal_idx = 1 if len(route_xy) > 1 else 0
-    command_rate_n_s = 9000.0
-    command_fx_prev = 0.0
-    command_fy_prev = 0.0
-    controller_gains = XYVehicleControllerGains(
+    setup = build_coordinate_mission_setup(
+        dest_x_m=dest_x_m,
+        dest_y_m=dest_y_m,
+        dest_z_m=dest_z_m,
+        start_x_m=start_x_m,
+        start_y_m=start_y_m,
+        start_z_m=start_z_m,
+        total_s=total_s,
+        yaw_hold_deg=yaw_hold_deg,
+        cruise_alt_m=cruise_alt_m,
+        arrival_radius_m=arrival_radius_m,
         pos_k_n_per_m=pos_k_n_per_m,
         vel_k_n_per_mps=vel_k_n_per_mps,
+        obstacles=obstacles,
+        geom=geom,
+        sim=sim,
+        lim=lim,
+        pl=pl,
+        power=power,
+        fault=fault,
     )
+    geom = setup.geom
+    sim = setup.sim
+    power = setup.power
+    power_state = setup.power_state
+    lim = setup.lim
+    pl = setup.pl
+    obstacles = setup.obstacles
+    fault = setup.fault
+    st = setup.st
+    allocator_state = setup.allocator_state
+    theta = setup.theta_rad
+    topology = setup.topology
+    effectiveness = setup.effectiveness
+    fz_cmd = setup.fz_cmd
+    transit_alt_m = setup.transit_alt_m
+    planner_clearance_m = setup.planner_clearance_m
+    route_xy = setup.route_xy
+    goal_idx = setup.goal_idx
+    command_rate_n_s = setup.command_rate_n_s
+    command_fx_prev = setup.command_fx_prev
+    command_fy_prev = setup.command_fy_prev
+    controller_gains = setup.controller_gains
+    hist = setup.hist
+    arrival_time_s = setup.arrival_time_s
+    hold_start_s = setup.hold_start_s
 
-    hist = build_coordinate_history()
-    arrival_time_s = None
-    hold_start_s = None
-
-    for k in range(steps):
+    for k in range(setup.steps):
         t = k * sim.dt_s
         dist_to_goal_m = float(math.hypot(dest_x_m - st.x_m, dest_y_m - st.y_m))
         speed_mps = float(math.hypot(st.vx_mps, st.vy_mps))

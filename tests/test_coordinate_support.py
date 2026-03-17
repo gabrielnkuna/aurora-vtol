@@ -3,6 +3,7 @@ import unittest
 from aurora_vtol.allocator.coordinate_support import (
     advance_route_goal,
     build_coordinate_history,
+    build_coordinate_mission_setup,
     build_coordinate_output,
     compute_desired_speed_mps,
     compute_target_altitude_m,
@@ -11,6 +12,7 @@ from aurora_vtol.allocator.coordinate_support import (
 )
 from aurora_vtol.allocator.dynamics import ActuatorLimits, PlenumModel
 from aurora_vtol.allocator.faults import FaultSpec
+from aurora_vtol.allocator.model import RingGeometry
 from aurora_vtol.allocator.power_system import PowerSystemParams
 from aurora_vtol.allocator.sim_runtime import SimParams
 
@@ -69,6 +71,34 @@ class CoordinateSupportTests(unittest.TestCase):
         self.assertEqual(arrival.fx_cmd, 0.0)
         self.assertEqual(arrival.fy_cmd, 0.0)
         self.assertEqual(arrival.arrival_time_s, 3.0)
+
+    def test_build_coordinate_mission_setup_initializes_defaults(self):
+        setup = build_coordinate_mission_setup(
+            dest_x_m=10.0,
+            dest_y_m=0.0,
+            dest_z_m=0.0,
+            start_x_m=0.0,
+            start_y_m=0.0,
+            start_z_m=0.0,
+            total_s=1.0,
+            yaw_hold_deg=0.0,
+            cruise_alt_m=12.0,
+            arrival_radius_m=1.5,
+            pos_k_n_per_m=120.0,
+            vel_k_n_per_mps=900.0,
+            obstacles=None,
+            geom=RingGeometry(),
+            sim=SimParams(),
+            lim=None,
+            pl=None,
+            power=None,
+            fault=None,
+        )
+        self.assertGreaterEqual(setup.steps, 1)
+        self.assertEqual(setup.goal_idx, 1)
+        self.assertGreaterEqual(len(setup.route_xy), 2)
+        self.assertEqual(setup.command_rate_n_s, 9000.0)
+        self.assertEqual(len(setup.theta_rad), setup.geom.n_segments)
 
     def test_build_coordinate_output_includes_hardware_assumptions(self):
         hist = build_coordinate_history()

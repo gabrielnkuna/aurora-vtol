@@ -193,6 +193,7 @@ Pure coordinate-mission support helpers.
 
 Responsibilities:
 
+- initialize coordinate mission defaults, topology/effectiveness, and planner state
 - advance routed subgoals and resolve active route geometry
 - apply budget-aware speed and altitude shaping
 - manage arrival/hold state and phase classification
