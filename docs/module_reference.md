@@ -220,8 +220,18 @@ Maneuver scenario orchestration.
 Responsibilities:
 
 - run demo, step, step-snap, step-redirect, and repel scenarios
-- coordinate controller, allocator, actuator, and power-model loops during maneuvers
+- shape maneuver commands and phase logic around the shared execution path
 - record maneuver-specific telemetry and summaries
+
+### `allocator/maneuver_execution.py`
+
+Shared maneuver execution helpers.
+
+Responsibilities:
+
+- apply allocation, faults, actuator limits, plenum lag, and power effects for one maneuver step
+- evaluate achieved forces and propagate vehicle state during stateful maneuvers
+- keep stateful maneuver execution logic consistent across step, snap, redirect, and repel paths
 
 ### `allocator/power_system.py`
 

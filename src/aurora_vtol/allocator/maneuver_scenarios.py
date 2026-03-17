@@ -5,11 +5,12 @@ import math
 import numpy as np
 
 from .allocate import AllocationRequest, allocate_v1, allocate_v2
-from .dynamics import AllocatorState, ActuatorLimits, PlenumModel, apply_actuator_limits, apply_plenum_lag
-from .faults import FaultSpec, apply_command_faults_to_alpha, apply_faults_to_alpha, apply_faults_to_thrust
+from .dynamics import AllocatorState, ActuatorLimits, PlenumModel
+from .faults import FaultSpec
 from .field import RepelField, repel_force_xy
 from .metrics import yaw_track_coupling_mean_abs
 from .model import RingGeometry, net_force_and_yaw_moment, segment_angles_rad, thrust_vectors_body
+from .maneuver_execution import execute_maneuver_step
 from .power_system import PowerSystemParams, apply_power_system, guidance_force_budget, init_hover_power_state
 from .response import compute_step_metrics
 from .sim_runtime import SimParams, SimState, append_engineering_telemetry, clip_force_xy, rate_limit_xy_force, step_vehicle
@@ -117,43 +118,32 @@ def run_step_test_v3(dir_deg_a: float = 0.0, dir_deg_b: float = 180.0, fxy_n: fl
         fx_cmd = fxy_n * math.cos(phi)
         fy_cmd = fxy_n * math.sin(phi)
 
-        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault, topology=topology, effectiveness=effectiveness)
-        alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
-        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
-        ft_target = alloc.ft_tan_per_seg_n
-
-        state = apply_actuator_limits(state, alpha_target, ft_target, lim, sim.dt_s, fault=fault)
-
-        demand = 1.0 + 0.20 * (np.abs(state.alpha_rad) / max(1e-6, np.max(np.abs(state.alpha_rad))))
-        demand = np.clip(demand, pl.min_scale, pl.max_scale)
-        state = apply_plenum_lag(state, demand, pl, sim.dt_s)
-        alpha_actual = apply_faults_to_alpha(state.alpha_rad, fault)
-
-        thrust_cmd = thrust_target
-        thrust_pre_power = thrust_cmd * state.plenum_scale
-        thrust, power_state, telemetry = apply_power_system(
-            thrust_cmd,
-            thrust_pre_power,
-            alpha_target,
-            alpha_actual,
-            state.ft_tan_per_seg_n,
-            sim,
-            geom,
-            power,
-            power_state,
-            sim.dt_s,
+        execution = execute_maneuver_step(
+            st=st,
+            allocator_state=state,
+            geom=geom,
+            sim=sim,
+            lim=lim,
+            pl=pl,
+            power=power,
+            power_state=power_state,
+            fault=fault,
             topology=topology,
+            effectiveness=effectiveness,
+            theta_rad=theta,
+            fx_cmd=fx_cmd,
+            fy_cmd=fy_cmd,
+            fz_cmd=fz_cmd,
+            mz_nm=mz_nm,
         )
+        state = execution.allocator_state
+        power_state = execution.power_state
+        alpha_actual = execution.alpha_actual_rad
+        telemetry = execution.telemetry
+        net = execution.net_force_n
+        mz_est = execution.mz_est_nm
+        speed = execution.speed_mps
         hist["fan_thrust_16"].append(list(telemetry["fan_actual_16"]))
-
-        forces_main = thrust_vectors_body(geom, thrust, alpha_actual, theta)
-        fx_t = state.ft_tan_per_seg_n * (-np.sin(theta))
-        fy_t = state.ft_tan_per_seg_n * (np.cos(theta))
-        forces = forces_main + np.stack([fx_t, fy_t, np.zeros_like(fx_t)], axis=1)
-        net, mz_est = net_force_and_yaw_moment(geom, forces)
-
-        step_vehicle(st, float(net[0]), float(net[1]), float(net[2]), float(mz_est), sim)
-        speed = float(math.hypot(st.vx_mps, st.vy_mps))
 
         hist["t"].append(t)
         hist["x"].append(st.x_m); hist["y"].append(st.y_m); hist["z"].append(st.z_m)
@@ -467,46 +457,32 @@ def run_step_snap_v3(
         fx_cmd, fy_cmd = rate_limit_xy_force(command_fx_prev, command_fy_prev, fx_raw, fy_raw, command_rate_active_n_s, sim.dt_s)
         command_fx_prev, command_fy_prev = fx_cmd, fy_cmd
 
-        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault, topology=topology, effectiveness=effectiveness)
-        alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
-        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
-        ft_target = alloc.ft_tan_per_seg_n
-
-        # actuator limits
-        state = apply_actuator_limits(state, alpha_target, ft_target, lim, sim.dt_s, fault=fault)
-
-        # plenum lag
-        demand = 1.0 + 0.20 * (np.abs(state.alpha_rad) / max(1e-6, np.max(np.abs(state.alpha_rad))))
-        demand = np.clip(demand, pl.min_scale, pl.max_scale)
-        state = apply_plenum_lag(state, demand, pl, sim.dt_s)
-        alpha_actual = apply_faults_to_alpha(state.alpha_rad, fault)
-
-        thrust_cmd = thrust_target
-        thrust_pre_power = thrust_cmd * state.plenum_scale
-        thrust, power_state, telemetry = apply_power_system(
-            thrust_cmd,
-            thrust_pre_power,
-            alpha_target,
-            alpha_actual,
-            state.ft_tan_per_seg_n,
-            sim,
-            geom,
-            power,
-            power_state,
-            sim.dt_s,
+        execution = execute_maneuver_step(
+            st=st,
+            allocator_state=state,
+            geom=geom,
+            sim=sim,
+            lim=lim,
+            pl=pl,
+            power=power,
+            power_state=power_state,
+            fault=fault,
             topology=topology,
+            effectiveness=effectiveness,
+            theta_rad=theta,
+            fx_cmd=fx_cmd,
+            fy_cmd=fy_cmd,
+            fz_cmd=fz_cmd,
+            mz_nm=mz_nm,
         )
+        state = execution.allocator_state
+        power_state = execution.power_state
+        alpha_actual = execution.alpha_actual_rad
+        telemetry = execution.telemetry
+        net = execution.net_force_n
+        mz_est = execution.mz_est_nm
+        speed = execution.speed_mps
         hist["fan_thrust_16"].append(list(telemetry["fan_actual_16"]))
-
-        forces_main = thrust_vectors_body(geom, thrust, alpha_actual, theta)
-        fx_t = state.ft_tan_per_seg_n * (-np.sin(theta))
-        fy_t = state.ft_tan_per_seg_n * (np.cos(theta))
-        forces = forces_main + np.stack([fx_t, fy_t, np.zeros_like(fx_t)], axis=1)
-
-        net, mz_est = net_force_and_yaw_moment(geom, forces)
-        step_vehicle(st, float(net[0]), float(net[1]), float(net[2]), float(mz_est), sim)
-
-        speed = float(math.hypot(st.vx_mps, st.vy_mps))
 
         hist["t"].append(t)
         hist["x"].append(st.x_m); hist["y"].append(st.y_m); hist["z"].append(st.z_m)
@@ -837,44 +813,32 @@ def run_step_redirect_v3(
         fx_cmd, fy_cmd = rate_limit_xy_force(command_fx_prev, command_fy_prev, fx_raw, fy_raw, command_rate_active_n_s, sim.dt_s)
         command_fx_prev, command_fy_prev = fx_cmd, fy_cmd
 
-        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault, topology=topology, effectiveness=effectiveness)
-        alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
-        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
-        ft_target = alloc.ft_tan_per_seg_n
-
-        state = apply_actuator_limits(state, alpha_target, ft_target, lim, sim.dt_s, fault=fault)
-
-        demand = 1.0 + 0.20 * (np.abs(state.alpha_rad) / max(1e-6, np.max(np.abs(state.alpha_rad))))
-        demand = np.clip(demand, pl.min_scale, pl.max_scale)
-        state = apply_plenum_lag(state, demand, pl, sim.dt_s)
-        alpha_actual = apply_faults_to_alpha(state.alpha_rad, fault)
-
-        thrust_cmd = thrust_target
-        thrust_pre_power = thrust_cmd * state.plenum_scale
-        thrust, power_state, telemetry = apply_power_system(
-            thrust_cmd,
-            thrust_pre_power,
-            alpha_target,
-            alpha_actual,
-            state.ft_tan_per_seg_n,
-            sim,
-            geom,
-            power,
-            power_state,
-            sim.dt_s,
+        execution = execute_maneuver_step(
+            st=st,
+            allocator_state=state,
+            geom=geom,
+            sim=sim,
+            lim=lim,
+            pl=pl,
+            power=power,
+            power_state=power_state,
+            fault=fault,
             topology=topology,
+            effectiveness=effectiveness,
+            theta_rad=theta,
+            fx_cmd=fx_cmd,
+            fy_cmd=fy_cmd,
+            fz_cmd=fz_cmd,
+            mz_nm=mz_nm,
         )
+        state = execution.allocator_state
+        power_state = execution.power_state
+        alpha_actual = execution.alpha_actual_rad
+        telemetry = execution.telemetry
+        net = execution.net_force_n
+        mz_est = execution.mz_est_nm
+        speed = execution.speed_mps
         hist["fan_thrust_16"].append(list(telemetry["fan_actual_16"]))
-
-        forces_main = thrust_vectors_body(geom, thrust, alpha_actual, theta)
-        fx_t = state.ft_tan_per_seg_n * (-np.sin(theta))
-        fy_t = state.ft_tan_per_seg_n * (np.cos(theta))
-        forces = forces_main + np.stack([fx_t, fy_t, np.zeros_like(fx_t)], axis=1)
-
-        net, mz_est = net_force_and_yaw_moment(geom, forces)
-        step_vehicle(st, float(net[0]), float(net[1]), float(net[2]), float(mz_est), sim)
-
-        speed = float(math.hypot(st.vx_mps, st.vy_mps))
         hist["t"].append(t)
         hist["x"].append(st.x_m); hist["y"].append(st.y_m); hist["z"].append(st.z_m)
         hist["vx"].append(st.vx_mps); hist["vy"].append(st.vy_mps); hist["vz"].append(st.vz_mps)
@@ -1014,41 +978,32 @@ def run_repel_test_v4(obstacle_x_m: float = 30.0, obstacle_y_m: float = 0.0, ini
         dist = float(math.hypot(st.x_m - obstacle_x_m, st.y_m - obstacle_y_m))
         fx_cmd, fy_cmd = repel_force_xy(field, st.x_m, st.y_m, obstacle_x_m, obstacle_y_m)
 
-        alloc = allocate_v2(geom, AllocationRequest(fx_cmd, fy_cmd, fz_cmd, mz_nm), fault=fault, topology=topology, effectiveness=effectiveness)
-        alpha_target = apply_command_faults_to_alpha(alloc.alpha_rad, fault)
-        thrust_target = apply_faults_to_thrust(alloc.thrust_per_seg_n, fault, topology=topology)
-        ft_target = alloc.ft_tan_per_seg_n
-
-        state = apply_actuator_limits(state, alpha_target, ft_target, lim, sim.dt_s, fault=fault)
-        demand = 1.0 + 0.20 * (np.abs(state.alpha_rad) / max(1e-6, np.max(np.abs(state.alpha_rad))))
-        demand = np.clip(demand, pl.min_scale, pl.max_scale)
-        state = apply_plenum_lag(state, demand, pl, sim.dt_s)
-        alpha_actual = apply_faults_to_alpha(state.alpha_rad, fault)
-
-        thrust_cmd = thrust_target
-        thrust_pre_power = thrust_cmd * state.plenum_scale
-        thrust, power_state, telemetry = apply_power_system(
-            thrust_cmd,
-            thrust_pre_power,
-            alpha_target,
-            alpha_actual,
-            state.ft_tan_per_seg_n,
-            sim,
-            geom,
-            power,
-            power_state,
-            sim.dt_s,
+        execution = execute_maneuver_step(
+            st=st,
+            allocator_state=state,
+            geom=geom,
+            sim=sim,
+            lim=lim,
+            pl=pl,
+            power=power,
+            power_state=power_state,
+            fault=fault,
             topology=topology,
+            effectiveness=effectiveness,
+            theta_rad=theta,
+            fx_cmd=fx_cmd,
+            fy_cmd=fy_cmd,
+            fz_cmd=fz_cmd,
+            mz_nm=mz_nm,
         )
+        state = execution.allocator_state
+        power_state = execution.power_state
+        alpha_actual = execution.alpha_actual_rad
+        telemetry = execution.telemetry
+        net = execution.net_force_n
+        mz_est = execution.mz_est_nm
+        speed = execution.speed_mps
         hist["fan_thrust_16"].append(list(telemetry["fan_actual_16"]))
-        forces_main = thrust_vectors_body(geom, thrust, alpha_actual, theta)
-        fx_t = state.ft_tan_per_seg_n * (-np.sin(theta))
-        fy_t = state.ft_tan_per_seg_n * (np.cos(theta))
-        forces = forces_main + np.stack([fx_t, fy_t, np.zeros_like(fx_t)], axis=1)
-        net, mz_est = net_force_and_yaw_moment(geom, forces)
-
-        step_vehicle(st, float(net[0]), float(net[1]), float(net[2]), float(mz_est), sim)
-        speed = float(math.hypot(st.vx_mps, st.vy_mps))
 
         hist["t"].append(t)
         hist["x"].append(st.x_m); hist["y"].append(st.y_m); hist["z"].append(st.z_m)
