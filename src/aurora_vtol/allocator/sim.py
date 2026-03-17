@@ -9,6 +9,7 @@ from .metrics import yaw_track_coupling_mean_abs
 from .dynamics import AllocatorState, ActuatorLimits, PlenumModel, apply_actuator_limits, apply_plenum_lag
 from .response import compute_step_metrics
 from .field import RepelField, repel_force_xy
+from .mission_planning import MissionObstacle, mission_safety_force, plan_route_waypoints
 from .faults import FaultSpec, apply_command_faults_to_alpha, apply_faults_to_alpha, apply_faults_to_thrust
 from .trace import save_trace_json
 from ..icd import ActuatorHealthState, EstimatedVehicleState, GuidanceTarget, RedirectTarget
@@ -38,17 +39,6 @@ class SimState:
     vz_mps: float = 0.0
     yaw_deg: float = 0.0
     yaw_rate_deg_s: float = 0.0
-
-
-@dataclass(frozen=True)
-class MissionObstacle:
-    x_m: float
-    y_m: float
-    radius_m: float = 12.0
-    k_n_per_m: float = 180.0
-    fxy_max_n: float = 2500.0
-    swirl_n: float = 900.0
-    influence_m: float = 20.0
 
 
 @dataclass(frozen=True)
