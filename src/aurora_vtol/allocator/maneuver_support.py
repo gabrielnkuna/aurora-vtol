@@ -12,8 +12,9 @@ from .model import RingGeometry, segment_angles_rad
 from .power_system import PowerSystemParams, init_hover_power_state, smoothstep01
 from .sim_runtime import SimParams, SimState, append_engineering_telemetry
 from ..effectiveness import effectiveness_table_for_topology
-from ..icd import ActuatorHealthState, EstimatedVehicleState
+from ..icd import ActuatorHealthState, EstimatedVehicleState, RedirectTarget
 from ..topology import default_ring_topology
+from ..vehicle_controller import command_directional_force, track_redirect_velocity, track_step_snap_brake, track_step_snap_reverse
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,23 @@ class TurnGeometry:
 
 
 @dataclass(frozen=True)
+class StepSnapShaping:
+    hold_frac: float
+    steer_scale: float
+    redirect_sep_deg: float
+    turn_ratio: float
+    phase_c_ramp_steps: int
+
+
+@dataclass(frozen=True)
+class StepRedirectShaping:
+    redirect_sep_deg: float
+    turn_ratio: float
+    redirect_steps: int
+    settle_steps: int
+
+
+@dataclass(frozen=True)
 class StepSnapGuardProfile:
     fxy_budget_n: float
     speed_guard_scale: float
@@ -67,6 +85,15 @@ class StepRedirectGuardProfile:
     gain_guard_scale: float
     power_priority_scale: float
     power_ratio_filt: float
+
+
+@dataclass(frozen=True)
+class ManeuverPhaseCommand:
+    phase: str
+    dir_deg: float
+    fx_raw: float
+    fy_raw: float
+    step_speed_ref: float
 
 
 def heading_error_deg(a_deg: float, b_deg: float) -> float:
@@ -102,6 +129,51 @@ def build_turn_geometry(dir_deg_a: float, dir_deg_b: float) -> TurnGeometry:
         nominal_brake_unit=nominal_brake_unit,
         separation_deg=separation_deg,
         turn_ratio=turn_ratio,
+    )
+
+
+def build_step_snap_shaping(
+    *,
+    turn: TurnGeometry,
+    redirect_hold_frac: float,
+    redirect_steer_scale: float,
+    fault_profile: Mapping[str, float],
+    dt_s: float,
+) -> StepSnapShaping:
+    if redirect_hold_frac < 0.0:
+        hold_frac = float(np.clip(0.65 + 0.35 * turn.turn_ratio, 0.55, 0.98))
+    else:
+        hold_frac = float(np.clip(redirect_hold_frac, 0.0, 0.95))
+    steer_scale = float(np.clip(redirect_steer_scale, 0.0, 1.5))
+    phase_c_ramp_steps = max(
+        1,
+        int((0.75 + 0.95 * turn.turn_ratio + 0.35 * hold_frac) / max(1e-6, float(fault_profile['dead_align_scale'])) / dt_s),
+    )
+    target_dir_deg = (math.degrees(math.atan2(turn.target_unit[1], turn.target_unit[0])) + 360.0) % 360.0
+    redirect_sep_deg = heading_error_deg(turn.nominal_brake_dir_deg, target_dir_deg)
+    return StepSnapShaping(
+        hold_frac=hold_frac,
+        steer_scale=steer_scale,
+        redirect_sep_deg=redirect_sep_deg,
+        turn_ratio=redirect_sep_deg / 180.0,
+        phase_c_ramp_steps=phase_c_ramp_steps,
+    )
+
+
+def build_step_redirect_shaping(
+    *,
+    turn: TurnGeometry,
+    step_idx: int,
+    redirect_end_idx: int,
+    dt_s: float,
+) -> StepRedirectShaping:
+    redirect_steps = max(1, redirect_end_idx - step_idx)
+    settle_steps = max(1, int((0.60 + 0.50 * turn.turn_ratio) / dt_s))
+    return StepRedirectShaping(
+        redirect_sep_deg=turn.separation_deg,
+        turn_ratio=turn.turn_ratio,
+        redirect_steps=redirect_steps,
+        settle_steps=settle_steps,
     )
 
 
@@ -176,6 +248,19 @@ def build_maneuver_health(*, fxy_budget_n: float, guard: Mapping[str, float]) ->
         supply_scale_pct=100.0 * float(guard["supply_guard_scale"]),
         fault_available_scale=float(guard["fault_available_scale"]),
         fault_asymmetry_pct=float(guard["fault_asymmetry_pct"]),
+    )
+
+
+def scale_maneuver_health_lateral_budget(health: ActuatorHealthState, scale: float) -> ActuatorHealthState:
+    return ActuatorHealthState(
+        lateral_budget_n=float(health.lateral_budget_n) * float(scale),
+        guard_scale=health.guard_scale,
+        response_scale=health.response_scale,
+        continuous_power_ratio=health.continuous_power_ratio,
+        thermal_scale_pct=health.thermal_scale_pct,
+        supply_scale_pct=health.supply_scale_pct,
+        fault_available_scale=health.fault_available_scale,
+        fault_asymmetry_pct=health.fault_asymmetry_pct,
     )
 
 
@@ -255,6 +340,197 @@ def build_step_redirect_guard_profile(
         gain_guard_scale=gain_guard_scale,
         power_priority_scale=power_priority_scale,
         power_ratio_filt=next_power_ratio_filt,
+    )
+
+
+def compute_step_snap_phase_command(
+    *,
+    k: int,
+    step_idx: int,
+    snap_end_idx: int,
+    dir_deg_a: float,
+    dir_deg_b: float,
+    step_speed_ref: float,
+    speed_stop_thr_mps: float,
+    fxy_n: float,
+    fz_cmd: float,
+    mz_nm: float,
+    brake_gain: float,
+    maneuver_state: EstimatedVehicleState,
+    maneuver_health: ActuatorHealthState,
+    snap_shaping: StepSnapShaping,
+    turn: TurnGeometry,
+    guard_profile: StepSnapGuardProfile,
+    st: SimState,
+) -> ManeuverPhaseCommand:
+    if k < step_idx:
+        phase = "A"
+        dir_deg = dir_deg_a
+        phase_control = command_directional_force(
+            math.cos(math.radians(dir_deg_a)),
+            math.sin(math.radians(dir_deg_a)),
+            maneuver_health,
+            fxy_command_n=fxy_n,
+            force_scale=guard_profile.gain_guard_scale,
+            fz_n=fz_cmd,
+            mz_nm=mz_nm,
+            source="maneuver-controller.step-snap-cruise",
+        )
+        return ManeuverPhaseCommand(
+            phase=phase,
+            dir_deg=dir_deg,
+            fx_raw=phase_control.raw_fx_n,
+            fy_raw=phase_control.raw_fy_n,
+            step_speed_ref=step_speed_ref,
+        )
+
+    if step_speed_ref <= 1e-6:
+        step_speed_ref = max(speed_stop_thr_mps, float(math.hypot(st.vx_mps, st.vy_mps)))
+
+    if k < snap_end_idx:
+        phase = "B"
+        progress = (k - step_idx) / max(1, snap_end_idx - step_idx - 1)
+        steer_progress = smoothstep_local((progress - snap_shaping.hold_frac) / max(1e-6, 1.0 - snap_shaping.hold_frac))
+        steer_mix = float(np.clip(0.35 * steer_progress * snap_shaping.steer_scale, 0.0, 0.45))
+        phase_control = track_step_snap_brake(
+            maneuver_state,
+            target_ux=turn.target_unit[0],
+            target_uy=turn.target_unit[1],
+            nominal_brake_ux=turn.nominal_brake_unit[0],
+            nominal_brake_uy=turn.nominal_brake_unit[1],
+            steer_mix=steer_mix,
+            health=scale_maneuver_health_lateral_budget(maneuver_health, brake_gain),
+            fxy_command_n=fxy_n,
+            brake_gain=brake_gain * guard_profile.gain_guard_scale * guard_profile.power_priority_scale * guard_profile.plenum_revector_trim * guard_profile.plenum_brake_trim * (1.0 - 0.20 * steer_mix),
+            fz_n=fz_cmd,
+            mz_nm=mz_nm,
+            source="maneuver-controller.step-snap-brake",
+        )
+        dir_deg = (math.degrees(math.atan2(phase_control.command_uy, phase_control.command_ux)) + 360.0) % 360.0
+        return ManeuverPhaseCommand(
+            phase=phase,
+            dir_deg=dir_deg,
+            fx_raw=phase_control.raw_fx_n,
+            fy_raw=phase_control.raw_fy_n,
+            step_speed_ref=step_speed_ref,
+        )
+
+    phase = "C"
+    dir_deg = dir_deg_b
+    phase_c_progress = smoothstep_local((k - snap_end_idx) / snap_shaping.phase_c_ramp_steps)
+    desired_along_speed = step_speed_ref * phase_c_progress * guard_profile.speed_guard_scale
+    if guard_profile.dead_align_scale > 1.0:
+        align_capture = smoothstep_local((phase_c_progress - 0.18) / 0.42)
+        desired_along_speed = max(desired_along_speed, guard_profile.dead_align_speed_floor_mps * align_capture)
+    if guard_profile.plenum_align_speed_floor_mps > 1e-6:
+        plenum_align_capture = smoothstep_local((phase_c_progress - 0.24) / 0.34)
+        desired_along_speed = max(desired_along_speed, guard_profile.plenum_align_speed_floor_mps * plenum_align_capture)
+    cross_gain = (0.75 + 0.45 * snap_shaping.turn_ratio) * guard_profile.dead_cross_scale * guard_profile.plenum_revector_trim
+    reverse_force_scale = (0.40 + 0.60 * phase_c_progress) * guard_profile.gain_guard_scale * guard_profile.power_priority_scale * guard_profile.plenum_revector_trim
+    if guard_profile.dead_align_scale > 1.0:
+        reverse_force_scale *= 0.90 + 0.10 * guard_profile.dead_align_scale
+    phase_control = track_step_snap_reverse(
+        maneuver_state,
+        target_ux=turn.target_unit[0],
+        target_uy=turn.target_unit[1],
+        reference_speed_mps=step_speed_ref,
+        desired_along_speed_mps=desired_along_speed,
+        cross_gain=cross_gain,
+        health=maneuver_health,
+        fxy_command_n=fxy_n,
+        force_scale=reverse_force_scale,
+        fz_n=fz_cmd,
+        mz_nm=mz_nm,
+        source="maneuver-controller.step-snap-reverse",
+    )
+    return ManeuverPhaseCommand(
+        phase=phase,
+        dir_deg=dir_deg,
+        fx_raw=phase_control.raw_fx_n,
+        fy_raw=phase_control.raw_fy_n,
+        step_speed_ref=step_speed_ref,
+    )
+
+
+def compute_step_redirect_phase_command(
+    *,
+    k: int,
+    step_idx: int,
+    redirect_end_idx: int,
+    dir_deg_a: float,
+    yaw_hold_deg: float,
+    step_speed_ref: float,
+    fxy_n: float,
+    mz_nm: float,
+    redirect_speed_scale: float,
+    redirect_cross_gain: float,
+    maneuver_state: EstimatedVehicleState,
+    maneuver_health: ActuatorHealthState,
+    redirect_shaping: StepRedirectShaping,
+    turn: TurnGeometry,
+    guard_profile: StepRedirectGuardProfile,
+    st: SimState,
+) -> ManeuverPhaseCommand:
+    if k < step_idx:
+        phase = "A"
+        dir_deg = dir_deg_a
+        phi = math.radians(dir_deg)
+        return ManeuverPhaseCommand(
+            phase=phase,
+            dir_deg=dir_deg,
+            fx_raw=fxy_n * guard_profile.gain_guard_scale * math.cos(phi),
+            fy_raw=fxy_n * guard_profile.gain_guard_scale * math.sin(phi),
+            step_speed_ref=step_speed_ref,
+        )
+
+    if step_speed_ref <= 1e-6:
+        step_speed_ref = max(0.75, float(math.hypot(st.vx_mps, st.vy_mps)))
+
+    if k < redirect_end_idx:
+        phase = "R"
+        progress = smoothstep_local((k - step_idx) / max(1, redirect_shaping.redirect_steps - 1))
+    else:
+        phase = "C"
+        progress = 1.0
+
+    desired_dir_x = (1.0 - progress) * turn.start_unit[0] + progress * turn.target_unit[0]
+    desired_dir_y = (1.0 - progress) * turn.start_unit[1] + progress * turn.target_unit[1]
+    desired_ux, desired_uy = unit_or_default(desired_dir_x, desired_dir_y, turn.target_unit)
+    desired_speed = step_speed_ref * (redirect_speed_scale + (1.0 - redirect_speed_scale) * progress)
+    desired_speed *= guard_profile.speed_guard_scale
+
+    if phase == "R":
+        phase_scale = (0.50 + 0.40 * progress) * (1.0 - 0.12 * redirect_shaping.turn_ratio * (1.0 - progress))
+    else:
+        settle_progress = smoothstep_local((k - redirect_end_idx) / redirect_shaping.settle_steps)
+        phase_scale = 0.78 + 0.22 * settle_progress
+    phase_scale *= guard_profile.gain_guard_scale
+
+    redirect_target = RedirectTarget(
+        desired_ux=desired_ux,
+        desired_uy=desired_uy,
+        desired_speed_mps=desired_speed,
+        reference_speed_mps=step_speed_ref,
+        cross_gain=redirect_cross_gain,
+        hold_yaw_deg=yaw_hold_deg,
+        phase=phase,
+        force_scale=phase_scale,
+    )
+    redirect_control = track_redirect_velocity(
+        maneuver_state,
+        redirect_target,
+        maneuver_health,
+        fxy_command_n=fxy_n,
+        mz_nm=mz_nm,
+        source="maneuver-controller.step-redirect",
+    )
+    dir_deg = (math.degrees(math.atan2(redirect_control.command_uy, redirect_control.command_ux)) + 360.0) % 360.0
+    return ManeuverPhaseCommand(
+        phase=phase,
+        dir_deg=dir_deg,
+        fx_raw=redirect_control.raw_fx_n,
+        fy_raw=redirect_control.raw_fy_n,
+        step_speed_ref=step_speed_ref,
     )
 
 

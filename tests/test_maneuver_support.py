@@ -6,10 +6,14 @@ from aurora_vtol.allocator.maneuver_support import (
     append_stateful_maneuver_history,
     build_maneuver_health,
     build_maneuver_state,
-    build_step_redirect_guard_profile,
-    build_step_snap_guard_profile,
     build_stateful_maneuver_setup,
+    build_step_redirect_guard_profile,
+    build_step_redirect_shaping,
+    build_step_snap_guard_profile,
+    build_step_snap_shaping,
     build_turn_geometry,
+    compute_step_redirect_phase_command,
+    compute_step_snap_phase_command,
     heading_error_deg,
     unit_or_default,
 )
@@ -40,6 +44,27 @@ class ManeuverSupportTests(unittest.TestCase):
         self.assertAlmostEqual(turn.target_unit[1], 1.0)
         self.assertAlmostEqual(turn.separation_deg, 90.0)
         self.assertAlmostEqual(turn.turn_ratio, 0.5)
+
+    def test_build_step_snap_shaping_clips_inputs_and_builds_ramp(self):
+        turn = build_turn_geometry(0.0, 90.0)
+        shaping = build_step_snap_shaping(
+            turn=turn,
+            redirect_hold_frac=-1.0,
+            redirect_steer_scale=2.0,
+            fault_profile={'dead_align_scale': 1.0},
+            dt_s=0.1,
+        )
+        self.assertGreaterEqual(shaping.hold_frac, 0.55)
+        self.assertLessEqual(shaping.steer_scale, 1.5)
+        self.assertGreaterEqual(shaping.phase_c_ramp_steps, 1)
+        self.assertEqual(shaping.redirect_sep_deg, 90.0)
+
+    def test_build_step_redirect_shaping_builds_transition_windows(self):
+        turn = build_turn_geometry(0.0, 90.0)
+        shaping = build_step_redirect_shaping(turn=turn, step_idx=10, redirect_end_idx=18, dt_s=0.1)
+        self.assertEqual(shaping.redirect_steps, 8)
+        self.assertGreaterEqual(shaping.settle_steps, 1)
+        self.assertEqual(shaping.redirect_sep_deg, 90.0)
 
     def test_heading_error_deg_wraps(self):
         self.assertEqual(heading_error_deg(350.0, 10.0), 20.0)
@@ -105,6 +130,74 @@ class ManeuverSupportTests(unittest.TestCase):
         self.assertLess(profile.gain_guard_scale, 1.0)
         self.assertGreaterEqual(profile.power_priority_scale, 0.68)
         self.assertLess(profile.power_ratio_filt, 0.98)
+
+    def test_compute_step_snap_phase_command_returns_cruise_before_step(self):
+        guard = {
+            'continuous_power_ratio': 0.91,
+            'thermal_guard_scale': 0.88,
+            'fault_available_scale': 0.77,
+            'fault_asymmetry_pct': 12.0,
+            'guard_scale': 0.66,
+            'fault_response_scale': 0.55,
+            'supply_guard_scale': 0.44,
+        }
+        st = SimState()
+        power_state = PowerSystemState(soc_frac=0.9, voltage_v=57.0, thermal_scale=0.95, burst_reserve_j=100.0)
+        maneuver_state = build_maneuver_state(st, power_state, guard)
+        maneuver_health = build_maneuver_health(fxy_budget_n=1500.0, guard=guard)
+        turn = build_turn_geometry(0.0, 90.0)
+        shaping = build_step_snap_shaping(turn=turn, redirect_hold_frac=-1.0, redirect_steer_scale=1.0, fault_profile={'dead_align_scale': 1.0}, dt_s=0.1)
+        snap_guard = build_step_snap_guard_profile(
+            initial_budget_n=1500.0,
+            guard={
+                'budget_ratio': 0.8, 'continuous_power_ratio': 0.91, 'power_guard_scale': 1.0, 'fault_guard_scale': 1.0,
+                'dead_align_scale': 1.0, 'dead_cross_scale': 1.0, 'dead_align_speed_floor_mps': 0.0,
+                'plenum_power_trim': 1.0, 'plenum_revector_trim': 1.0, 'plenum_align_speed_floor_mps': 0.0, 'plenum_brake_trim': 1.0,
+            },
+            power_ratio_filt=1.0,
+        )
+        command = compute_step_snap_phase_command(
+            k=0, step_idx=5, snap_end_idx=10, dir_deg_a=0.0, dir_deg_b=90.0, step_speed_ref=0.0,
+            speed_stop_thr_mps=0.2, fxy_n=1000.0, fz_cmd=10.0, mz_nm=0.0, brake_gain=1.2,
+            maneuver_state=maneuver_state, maneuver_health=maneuver_health, snap_shaping=shaping,
+            turn=turn, guard_profile=snap_guard, st=st,
+        )
+        self.assertEqual(command.phase, 'A')
+        self.assertEqual(command.dir_deg, 0.0)
+        self.assertGreater(command.fx_raw, 0.0)
+        self.assertAlmostEqual(command.fy_raw, 0.0, places=6)
+
+    def test_compute_step_redirect_phase_command_returns_cruise_before_step(self):
+        guard = {
+            'continuous_power_ratio': 0.91,
+            'thermal_guard_scale': 0.88,
+            'fault_available_scale': 0.77,
+            'fault_asymmetry_pct': 12.0,
+            'guard_scale': 0.66,
+            'fault_response_scale': 0.55,
+            'supply_guard_scale': 0.44,
+        }
+        st = SimState()
+        power_state = PowerSystemState(soc_frac=0.9, voltage_v=57.0, thermal_scale=0.95, burst_reserve_j=100.0)
+        maneuver_state = build_maneuver_state(st, power_state, guard)
+        maneuver_health = build_maneuver_health(fxy_budget_n=1500.0, guard=guard)
+        turn = build_turn_geometry(0.0, 90.0)
+        shaping = build_step_redirect_shaping(turn=turn, step_idx=5, redirect_end_idx=10, dt_s=0.1)
+        redirect_guard = build_step_redirect_guard_profile(
+            initial_budget_n=1500.0,
+            guard={'budget_ratio': 0.8, 'continuous_power_ratio': 0.91, 'power_guard_scale': 1.0, 'fault_guard_scale': 1.0},
+            power_ratio_filt=1.0,
+        )
+        command = compute_step_redirect_phase_command(
+            k=0, step_idx=5, redirect_end_idx=10, dir_deg_a=0.0, yaw_hold_deg=0.0, step_speed_ref=0.0,
+            fxy_n=1000.0, mz_nm=0.0, redirect_speed_scale=0.88, redirect_cross_gain=1.0,
+            maneuver_state=maneuver_state, maneuver_health=maneuver_health, redirect_shaping=shaping,
+            turn=turn, guard_profile=redirect_guard, st=st,
+        )
+        self.assertEqual(command.phase, 'A')
+        self.assertEqual(command.dir_deg, 0.0)
+        self.assertGreater(command.fx_raw, 0.0)
+        self.assertAlmostEqual(command.fy_raw, 0.0, places=6)
 
     def test_append_stateful_maneuver_history_updates_common_fields(self):
         st = SimState(x_m=1.0, y_m=2.0, z_m=3.0, vx_mps=4.0, vy_mps=5.0, vz_mps=6.0, yaw_deg=7.0, yaw_rate_deg_s=8.0)
