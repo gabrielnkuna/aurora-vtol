@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from aurora_vtol.allocator.sim import PowerSystemParams
-from aurora_vtol.fault_workflows import _fault_envelope_manifest, build_fault_envelope_report, load_fault_threshold_cases, resolve_fault_case, run_fault_threshold_report, select_fault_cases
+from aurora_vtol.fault_workflows import _fault_envelope_manifest, build_fault_envelope_report, load_fault_threshold_cases, resolve_fault_case, run_fault_envelope_report, run_fault_threshold_pack_report, run_fault_threshold_report, select_fault_cases
 
 
 class FaultWorkflowTests(unittest.TestCase):
@@ -48,6 +48,116 @@ class FaultWorkflowTests(unittest.TestCase):
         self.assertIn('preset_cfg', kwargs)
         self.assertIn('obstacles', kwargs)
         self.assertEqual(kwargs['preset_cfg']['dest_x_m'], 4.0)
+
+    def test_run_fault_envelope_report_writes_artifacts(self):
+        fake_report = {'preset': 'medium', 'top_cases': [{'case': 'dead-fan-00-x0'}]}
+        fake_ranked = [{'entry': {'case': 'dead-fan-00-x0'}, 'meta': {'trace': 'ok'}, 'hist': {'t': [0.0]}}]
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch('aurora_vtol.fault_workflows.build_fault_envelope_report', return_value=(fake_report, fake_ranked)) as mock_build:
+                with patch('aurora_vtol.fault_workflows.save_trace_json') as mock_save:
+                    report = run_fault_envelope_report(
+                        preset='medium',
+                        power_target_pct=100.0,
+                        flap_target_pct=90.0,
+                        tune_iterations=2,
+                        tune_min_aggressiveness=0.25,
+                        battery_full_v=None,
+                        battery_empty_v=None,
+                        capacity_kwh=None,
+                        internal_resistance_ohm=None,
+                        hover_power_kw=None,
+                        continuous_power_kw=None,
+                        peak_power_kw=None,
+                        aux_power_kw=None,
+                        dead_fan_scale=[0.0],
+                        stuck_flap_alpha_deg=[],
+                        plenum_sector_scale=[],
+                        fan_group=[0],
+                        flap_idx=[],
+                        plenum_sector_idx=[],
+                        flap_step=32,
+                        plenum_step=32,
+                        top_per_family=1,
+                        include_pairs=False,
+                        include_triples=False,
+                        resume=True,
+                        max_new_cases=0,
+                        top=1,
+                        save_traces=1,
+                        out_dir=tmp,
+                        preset_context_resolver=lambda preset: ({'dest_x_m': 4.0}, []),
+                    )
+                    self.assertTrue(Path(report['artifacts']['json']).exists())
+                    self.assertEqual(len(report['artifacts']['traces']), 1)
+                    self.assertIn('preset_cfg', mock_build.call_args.kwargs)
+                    self.assertIn('obstacles', mock_build.call_args.kwargs)
+                    mock_save.assert_called_once()
+
+    def test_run_fault_threshold_pack_report_aggregates_summaries(self):
+        fake_threshold = {
+            'summary_rows': [{
+                'case': 'dead-fan-00-x0',
+                'source': 'top:1',
+                'order': 1,
+                'families': 'fan',
+                'best_feasible': True,
+                'meets_threshold': True,
+                'required_continuous_power_kw': 125.0,
+                'battery_full_v': 58.8,
+                'capacity_kwh': 15.0,
+                'internal_resistance_ohm': 0.0015,
+                'hover_power_kw': 105.0,
+                'peak_power_kw': 165.0,
+                'selected_aggressiveness': 0.5,
+                'report_status': 'pass',
+                'continuous_power_p95_pct': 99.5,
+                'final_goal_error_m': 1.0,
+                'arrival_time_s': 6.0,
+                'severity_score': 5.0,
+            }],
+            'search_space': {'cached_cases': 1, 'new_cases': 0, 'complete': True},
+            'pending_cases': [],
+            'summary_artifacts': {'json': 'x.json'},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for preset in ('medium', 'long'):
+                summary_dir = root / f'fault_envelope_{preset}'
+                summary_dir.mkdir()
+                (summary_dir / 'summary.json').write_text(json.dumps({'preset': preset}), encoding='utf-8')
+            summaries = [str(root / 'fault_envelope_medium' / 'summary.json'), str(root / 'fault_envelope_long' / 'summary.json')]
+            with patch('aurora_vtol.fault_workflows.run_fault_threshold_report', return_value=fake_threshold) as mock_run:
+                report = run_fault_threshold_pack_report(
+                    summary_paths=summaries,
+                    preset_names=[],
+                    case_names=[],
+                    top_cases=1,
+                    include_family_worst=False,
+                    required_status='pass',
+                    power_target_pct=None,
+                    flap_target_pct=None,
+                    tune_iterations=None,
+                    tune_min_aggressiveness=None,
+                    battery_full_v=[],
+                    battery_empty_v=[],
+                    capacity_kwh=[],
+                    internal_resistance_ohm=[],
+                    hover_power_kw=[],
+                    continuous_power_kw=[],
+                    peak_power_kw=[],
+                    aux_power_kw=[],
+                    top=1,
+                    resume=True,
+                    max_new_cases=0,
+                    max_new_cases_total=0,
+                    out_dir=str(root / 'out'),
+                    preset_context_resolver=lambda preset: ({'dest_x_m': 4.0}, []),
+                )
+                self.assertEqual(report['search_space']['summaries'], 2)
+                self.assertEqual(report['search_space']['cached_cases'], 2)
+                self.assertEqual(len(report['summary_rows']), 2)
+                self.assertTrue(Path(report['summary_artifacts']['json']).exists())
+                self.assertEqual(mock_run.call_count, 2)
 
 
 if __name__ == '__main__':

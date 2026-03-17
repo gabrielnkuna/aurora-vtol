@@ -12,7 +12,7 @@ from aurora_vtol.allocator.faults import FaultSpec
 from aurora_vtol.allocator.model import RingGeometry
 from aurora_vtol.allocator.sim import MissionObstacle, PowerSystemParams
 from aurora_vtol.allocator.trace import save_trace_json
-from aurora_vtol.reporting import render_requirements_table, summarize_power_params
+from aurora_vtol.reporting import render_fault_envelope_table, render_fault_threshold_pack_table, render_fault_threshold_table, render_requirements_table, summarize_power_params
 from aurora_vtol.study_workflows import _fault_status_rank, _normalize_required_status, build_coordinate_mission_kwargs, build_power_params, build_power_sweep_report_for_fault, write_power_sweep_outputs
 
 FAULT_CASE_PRESETS = {
@@ -2368,3 +2368,297 @@ def run_fault_threshold_report(*, summary: str, case_names: list[str], top_cases
             g.pop('build_power_sweep_report_for_fault', None)
         else:
             g['build_power_sweep_report_for_fault'] = old_builder
+
+
+
+def run_fault_envelope_report(
+    *,
+    preset: str,
+    power_target_pct: float,
+    flap_target_pct: float,
+    tune_iterations: int,
+    tune_min_aggressiveness: float,
+    battery_full_v: float | None,
+    battery_empty_v: float | None,
+    capacity_kwh: float | None,
+    internal_resistance_ohm: float | None,
+    hover_power_kw: float | None,
+    continuous_power_kw: float | None,
+    peak_power_kw: float | None,
+    aux_power_kw: float | None,
+    dead_fan_scale: list[float],
+    stuck_flap_alpha_deg: list[float],
+    plenum_sector_scale: list[float],
+    fan_group: list[int],
+    flap_idx: list[int],
+    plenum_sector_idx: list[int],
+    flap_step: int,
+    plenum_step: int,
+    top_per_family: int,
+    include_pairs: bool,
+    include_triples: bool,
+    resume: bool,
+    max_new_cases: int,
+    top: int,
+    save_traces: int,
+    out_dir: str,
+    preset_context_resolver,
+) -> dict:
+    base_dir = Path(out_dir)
+    base_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir = base_dir / 'cache'
+    preset_cfg, obstacles = preset_context_resolver(preset)
+
+    report, ranked = build_fault_envelope_report(
+        preset=preset,
+        preset_cfg=preset_cfg,
+        obstacles=obstacles,
+        power_target_pct=power_target_pct,
+        flap_target_pct=flap_target_pct,
+        tune_iterations=tune_iterations,
+        tune_min_aggressiveness=tune_min_aggressiveness,
+        battery_full_v=battery_full_v,
+        battery_empty_v=battery_empty_v,
+        capacity_kwh=capacity_kwh,
+        internal_resistance_ohm=internal_resistance_ohm,
+        hover_power_kw=hover_power_kw,
+        continuous_power_kw=continuous_power_kw,
+        peak_power_kw=peak_power_kw,
+        aux_power_kw=aux_power_kw,
+        dead_fan_scale=dead_fan_scale,
+        stuck_flap_alpha_deg=stuck_flap_alpha_deg,
+        plenum_sector_scale=plenum_sector_scale,
+        fan_group=fan_group,
+        flap_idx=flap_idx,
+        plenum_sector_idx=plenum_sector_idx,
+        flap_step=flap_step,
+        plenum_step=plenum_step,
+        top_per_family=top_per_family,
+        include_pairs=include_pairs,
+        include_triples=include_triples,
+        top=top,
+        cache_dir=str(cache_dir),
+        resume=resume,
+        max_new_cases=max_new_cases,
+    )
+
+    trace_paths = []
+    for idx, bundle in enumerate(ranked[:max(0, int(save_traces))], start=1):
+        trace_path = base_dir / f'{idx:02d}_{_fault_case_slug(bundle["entry"]["case"])}.json'
+        cache_trace = bundle.get('cache_trace')
+        if cache_trace and Path(cache_trace).exists():
+            trace_path.write_text(Path(cache_trace).read_text(encoding='utf-8'), encoding='utf-8')
+        elif bundle.get('meta') is not None and bundle.get('hist') is not None:
+            save_trace_json(str(trace_path), meta=bundle['meta'], hist=bundle['hist'])
+        else:
+            continue
+        bundle['entry']['trace'] = str(trace_path)
+        trace_paths.append(str(trace_path))
+
+    summary_json = base_dir / 'summary.json'
+    summary_md = base_dir / 'summary.md'
+    summary_csv = base_dir / 'summary.csv'
+    summary_json.write_text(json.dumps(report, indent=2), encoding='utf-8')
+    summary_md.write_text(
+        render_fault_envelope_table(report['top_cases'], format_name='markdown', title=f'{preset} fault envelope summary'),
+        encoding='utf-8',
+    )
+    summary_csv.write_text(
+        render_fault_envelope_table(report['top_cases'], format_name='csv', title=f'{preset} fault envelope summary'),
+        encoding='utf-8',
+    )
+    report['artifacts'] = {
+        'json': str(summary_json),
+        'markdown': str(summary_md),
+        'csv': str(summary_csv),
+        'cache_dir': str(cache_dir),
+        'traces': trace_paths,
+    }
+    return report
+
+
+
+def run_fault_threshold_pack_report(
+    *,
+    summary_paths: list[str],
+    preset_names: list[str],
+    case_names: list[str],
+    top_cases: int,
+    include_family_worst: bool,
+    required_status: str,
+    power_target_pct: Optional[float],
+    flap_target_pct: Optional[float],
+    tune_iterations: Optional[int],
+    tune_min_aggressiveness: Optional[float],
+    battery_full_v: list[float],
+    battery_empty_v: list[float],
+    capacity_kwh: list[float],
+    internal_resistance_ohm: list[float],
+    hover_power_kw: list[float],
+    continuous_power_kw: list[float],
+    peak_power_kw: list[float],
+    aux_power_kw: list[float],
+    top: int,
+    resume: bool,
+    max_new_cases: int,
+    max_new_cases_total: int,
+    out_dir: str,
+    preset_context_resolver,
+) -> dict:
+    requested_presets = set(preset_names)
+    paths = [Path(item) for item in summary_paths] if summary_paths else sorted(Path('runs').glob('fault_envelope*/summary.json'))
+    if not paths:
+        raise typer.BadParameter('no fault-envelope summaries were provided or discovered')
+
+    resolved_summaries = []
+    seen = set()
+    for summary_path in paths:
+        if not summary_path.exists():
+            raise typer.BadParameter(f'fault-envelope summary does not exist: {summary_path}')
+        envelope_report = json.loads(summary_path.read_text(encoding='utf-8'))
+        current_preset = str(envelope_report.get('preset') or '').strip()
+        if not current_preset:
+            raise typer.BadParameter(f'fault-envelope summary missing preset: {summary_path}')
+        if requested_presets and current_preset not in requested_presets:
+            continue
+        key = (current_preset, str(summary_path))
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved_summaries.append({
+            'preset': current_preset,
+            'summary_path': str(summary_path),
+            'summary_source': summary_path.parent.name,
+        })
+
+    if not resolved_summaries:
+        allowed = ', '.join(sorted(requested_presets)) if requested_presets else 'discovered summaries'
+        raise typer.BadParameter(f'no summaries matched the requested presets: {allowed}')
+
+    base_dir = Path(out_dir)
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    pack_rows = []
+    preset_reports = []
+    total_cached_cases = 0
+    total_new_cases = 0
+    all_complete = True
+    remaining_total_budget = int(max_new_cases_total) if max_new_cases_total > 0 else None
+
+    for item in resolved_summaries:
+        preset_name = item['preset']
+        summary_path = item['summary_path']
+        summary_source = item['summary_source']
+        preset_dir = base_dir / f'{preset_name}__{_fault_case_slug(summary_source)}'
+        if remaining_total_budget is None:
+            per_summary_budget = max_new_cases
+        elif remaining_total_budget <= 0:
+            per_summary_budget = -1
+        elif max_new_cases > 0:
+            per_summary_budget = min(int(max_new_cases), int(remaining_total_budget))
+        else:
+            per_summary_budget = int(remaining_total_budget)
+
+        report = run_fault_threshold_report(
+            summary=summary_path,
+            case_names=list(case_names),
+            top_cases=top_cases,
+            include_family_worst=include_family_worst,
+            required_status=required_status,
+            power_target_pct=power_target_pct,
+            flap_target_pct=flap_target_pct,
+            tune_iterations=tune_iterations,
+            tune_min_aggressiveness=tune_min_aggressiveness,
+            battery_full_v=battery_full_v,
+            battery_empty_v=battery_empty_v,
+            capacity_kwh=capacity_kwh,
+            internal_resistance_ohm=internal_resistance_ohm,
+            hover_power_kw=hover_power_kw,
+            continuous_power_kw=continuous_power_kw,
+            peak_power_kw=peak_power_kw,
+            aux_power_kw=aux_power_kw,
+            top=top,
+            resume=resume,
+            max_new_cases=per_summary_budget,
+            out_dir=str(preset_dir),
+            preset_context_resolver=preset_context_resolver,
+        )
+        search_space = report.get('search_space', {})
+        total_cached_cases += int(search_space.get('cached_cases', 0))
+        total_new_cases += int(search_space.get('new_cases', 0))
+        if remaining_total_budget is not None:
+            remaining_total_budget -= int(search_space.get('new_cases', 0))
+        all_complete = all_complete and bool(search_space.get('complete', False))
+
+        for row in report.get('summary_rows', []):
+            pack_rows.append({
+                'preset': preset_name,
+                'summary_source': summary_source,
+                'case': row.get('case'),
+                'source': row.get('source'),
+                'order': row.get('order'),
+                'families': row.get('families'),
+                'best_feasible': row.get('best_feasible'),
+                'meets_threshold': row.get('meets_threshold'),
+                'required_continuous_power_kw': row.get('required_continuous_power_kw'),
+                'battery_full_v': row.get('battery_full_v'),
+                'capacity_kwh': row.get('capacity_kwh'),
+                'internal_resistance_ohm': row.get('internal_resistance_ohm'),
+                'hover_power_kw': row.get('hover_power_kw'),
+                'peak_power_kw': row.get('peak_power_kw'),
+                'selected_aggressiveness': row.get('selected_aggressiveness'),
+                'report_status': row.get('report_status'),
+                'continuous_power_p95_pct': row.get('continuous_power_p95_pct'),
+                'final_goal_error_m': row.get('final_goal_error_m'),
+                'arrival_time_s': row.get('arrival_time_s'),
+                'severity_score': row.get('severity_score'),
+            })
+
+        preset_reports.append({
+            'preset': preset_name,
+            'summary_source': summary_source,
+            'source_summary': summary_path,
+            'search_space': search_space,
+            'pending_cases': report.get('pending_cases', []),
+            'summary_artifacts': report.get('summary_artifacts', {}),
+        })
+
+    pack_rows.sort(key=lambda row: (
+        0 if row.get('meets_threshold') else 1,
+        0 if row.get('best_feasible') else 1,
+        row.get('required_continuous_power_kw') if row.get('required_continuous_power_kw') is not None else 1e9,
+        row.get('preset', ''),
+        -(float(row.get('severity_score') or 0.0)),
+        row.get('case', ''),
+    ))
+
+    pack_report = {
+        'summaries': preset_reports,
+        'summary_rows': pack_rows,
+        'search_space': {
+            'summaries': len(resolved_summaries),
+            'cached_cases': int(total_cached_cases),
+            'new_cases': int(total_new_cases),
+            'complete': bool(all_complete),
+            'max_new_cases_per_summary': int(max_new_cases),
+            'max_new_cases_total': int(max_new_cases_total),
+        },
+    }
+    summary_json = base_dir / 'summary.json'
+    summary_md = base_dir / 'summary.md'
+    summary_csv = base_dir / 'summary.csv'
+    pack_report['summary_artifacts'] = {
+        'json': str(summary_json),
+        'markdown': str(summary_md),
+        'csv': str(summary_csv),
+    }
+    summary_json.write_text(json.dumps(pack_report, indent=2), encoding='utf-8')
+    summary_md.write_text(
+        render_fault_threshold_pack_table(pack_rows, format_name='markdown', title='fault threshold pack summary'),
+        encoding='utf-8',
+    )
+    summary_csv.write_text(
+        render_fault_threshold_pack_table(pack_rows, format_name='csv', title='fault threshold pack summary'),
+        encoding='utf-8',
+    )
+    return pack_report
