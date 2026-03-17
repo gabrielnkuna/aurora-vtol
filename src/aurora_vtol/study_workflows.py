@@ -130,7 +130,7 @@ def build_power_sweep_report_for_fault(
     obstacles: list[MissionObstacle],
     fault_label: str,
     fault: FaultSpec,
-    fault_summary: dict | None,
+    fault_summary: dict,
     required_status: str,
     power_target_pct: float,
     flap_target_pct: float,
@@ -166,7 +166,7 @@ def build_power_sweep_report_for_fault(
 
     results = []
     best_candidate = None
-    summary_payload = dict(fault_summary) if fault_summary is not None else summarize_fault_case(fault_label, fault)
+    summary_payload = dict(fault_summary)
     normalized_required_status = _normalize_required_status(required_status)
 
     def selection_key(entry: dict) -> tuple[float, ...]:
