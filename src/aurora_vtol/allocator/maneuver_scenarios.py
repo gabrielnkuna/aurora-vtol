@@ -8,7 +8,7 @@ from .allocate import AllocationRequest, allocate_v1, allocate_v2
 from .dynamics import AllocatorState, ActuatorLimits, PlenumModel
 from .faults import FaultSpec
 from .field import RepelField, repel_force_xy
-from .metrics import time_to_positive_target_projection_s, time_to_track_alignment_s, yaw_track_coupling_mean_abs
+from .metrics import time_to_positive_target_projection_s, time_to_track_alignment_s, yaw_hold_error_mean_abs, yaw_rate_p95, yaw_track_coupling_mean_abs
 from .maneuver_support import append_stateful_maneuver_history, build_maneuver_health, build_maneuver_state, build_stateful_maneuver_setup, build_step_redirect_guard_profile, build_step_redirect_shaping, build_step_snap_guard_profile, build_step_snap_shaping, build_turn_geometry, compute_step_redirect_phase_command, compute_step_snap_phase_command
 from .model import RingGeometry, net_force_and_yaw_moment, segment_angles_rad, thrust_vectors_body
 from .maneuver_execution import execute_maneuver_step
@@ -872,8 +872,13 @@ def run_repel_test_v4(obstacle_x_m: float = 30.0, obstacle_y_m: float = 0.0, ini
         )
 
     coupling = yaw_track_coupling_mean_abs(hist)
+    yaw_hold_error = yaw_hold_error_mean_abs(hist, yaw_hold_deg=0.0)
+    yaw_rate_p95_deg_s = yaw_rate_p95(hist)
     meta = {"version": "v4", "obstacle": {"x_m": obstacle_x_m, "y_m": obstacle_y_m}, "field": field.__dict__, "fault": fault.__dict__,
-            "yaw_track_coupling_mean_abs_deg": coupling, "sim": {"dt_s": sim.dt_s, "mass_kg": sim.mass_kg, "drag_coeff": sim.drag_coeff, "gravity": sim.gravity, "yaw_inertia_kg_m2": sim.yaw_inertia_kg_m2, "yaw_damping_nm_per_rad_s": sim.yaw_damping_nm_per_rad_s, "z_drag_coeff": sim.z_drag_coeff, "z_hold_kp_n_per_m": sim.z_hold_kp_n_per_m, "z_hold_kd_n_per_mps": sim.z_hold_kd_n_per_mps}, "limits": lim.__dict__, "plenum": pl.__dict__, "power": power.__dict__, "hardware_assumptions": hardware_assumptions_payload(topology, effectiveness)}
+            "yaw_track_coupling_mean_abs_deg": coupling,
+            "yaw_hold_error_mean_abs_deg": yaw_hold_error,
+            "yaw_rate_p95_deg_s": yaw_rate_p95_deg_s,
+            "sim": {"dt_s": sim.dt_s, "mass_kg": sim.mass_kg, "drag_coeff": sim.drag_coeff, "gravity": sim.gravity, "yaw_inertia_kg_m2": sim.yaw_inertia_kg_m2, "yaw_damping_nm_per_rad_s": sim.yaw_damping_nm_per_rad_s, "z_drag_coeff": sim.z_drag_coeff, "z_hold_kp_n_per_m": sim.z_hold_kp_n_per_m, "z_hold_kd_n_per_mps": sim.z_hold_kd_n_per_mps}, "limits": lim.__dict__, "plenum": pl.__dict__, "power": power.__dict__, "hardware_assumptions": hardware_assumptions_payload(topology, effectiveness)}
     if trace_out:
         save_trace_json(trace_out, meta=meta, hist=hist)
 
@@ -962,5 +967,7 @@ def run_repel_test_v4(obstacle_x_m: float = 30.0, obstacle_y_m: float = 0.0, ini
                                      "t_to_vrad_away_0p5_s": t_to_vrad_away_0p5,
                                      "repel_speed_mps_median": float(np.median(sp_arr)) if sp_arr.size else None,
                                      "repel_speed_mps_max": float(np.max(sp_arr)) if sp_arr.size else None,
+                                     "yaw_hold_error_mean_abs_deg": yaw_hold_error,
+                                     "yaw_rate_p95_deg_s": yaw_rate_p95_deg_s,
                                      "yaw_track_coupling_mean_abs_deg": coupling}}
     return out, hist

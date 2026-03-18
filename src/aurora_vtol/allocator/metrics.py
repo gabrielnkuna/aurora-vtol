@@ -67,3 +67,18 @@ def yaw_track_coupling_mean_abs(hist: dict) -> float:
     ta = np.array([track_angle_deg(vx[i], vy[i]) for i in range(len(vx))], float)
     err = np.array([abs(wrap180(float(yaw[i] - ta[i]))) for i in range(len(yaw))], float)
     return float(np.mean(err[m]))
+
+
+def yaw_hold_error_mean_abs(hist: dict, *, yaw_hold_deg: float = 0.0) -> float:
+    yaw = np.array(hist.get("yaw_deg", []), float)
+    if yaw.size == 0:
+        return float("nan")
+    err = np.array([abs(wrap180(float(y - yaw_hold_deg))) for y in yaw], float)
+    return float(np.mean(err))
+
+
+def yaw_rate_p95(hist: dict) -> float:
+    yaw_rate = np.array(hist.get("yaw_rate_deg_s", []), float)
+    if yaw_rate.size == 0:
+        return float("nan")
+    return float(np.percentile(np.abs(yaw_rate), 95.0))

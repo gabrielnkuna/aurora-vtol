@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +25,10 @@ class ManeuverScenarioModuleTests(unittest.TestCase):
     def test_run_repel_smoke(self):
         meta, hist = run_repel_test_v4(total_s=0.1)
         self.assertIn('version', meta['meta'])
+        self.assertIn('yaw_hold_error_mean_abs_deg', meta['meta'])
+        self.assertIn('yaw_rate_p95_deg_s', meta['meta'])
+        self.assertIn('yaw_hold_error_mean_abs_deg', meta['headline'])
+        self.assertIn('yaw_rate_p95_deg_s', meta['headline'])
         self.assertGreaterEqual(len(hist['t']), 1)
 
     def test_run_repel_trace_out_smoke(self):
@@ -33,6 +38,9 @@ class ManeuverScenarioModuleTests(unittest.TestCase):
             self.assertIn('version', meta['meta'])
             self.assertGreaterEqual(len(hist['t']), 1)
             self.assertTrue(trace_path.exists())
+            trace = json.loads(trace_path.read_text())
+            self.assertIn('yaw_hold_error_mean_abs_deg', trace['meta'])
+            self.assertIn('yaw_rate_p95_deg_s', trace['meta'])
 
 
 if __name__ == '__main__':
