@@ -15,6 +15,7 @@ from .maneuver_execution import execute_maneuver_step
 from .power_system import PowerSystemParams, apply_power_system, fault_motion_guard, guidance_force_budget, init_hover_power_state
 from .response import compute_step_metrics
 from .sim_runtime import SimParams, SimState, append_engineering_telemetry, clip_force_xy, rate_limit_xy_force, step_vehicle
+from .trace import save_trace_json
 from ..effectiveness import effectiveness_table_for_topology, hardware_assumptions_payload
 from ..topology import default_ring_topology
 

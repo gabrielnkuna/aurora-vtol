@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 from aurora_vtol.allocator.maneuver_scenarios import run_demo, run_repel_test_v4, run_step_redirect_v3, run_step_test_v3
 
@@ -23,6 +25,14 @@ class ManeuverScenarioModuleTests(unittest.TestCase):
         meta, hist = run_repel_test_v4(total_s=0.1)
         self.assertIn('version', meta['meta'])
         self.assertGreaterEqual(len(hist['t']), 1)
+
+    def test_run_repel_trace_out_smoke(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            trace_path = Path(tmp) / 'repel_trace.json'
+            meta, hist = run_repel_test_v4(total_s=0.1, trace_out=str(trace_path))
+            self.assertIn('version', meta['meta'])
+            self.assertGreaterEqual(len(hist['t']), 1)
+            self.assertTrue(trace_path.exists())
 
 
 if __name__ == '__main__':
