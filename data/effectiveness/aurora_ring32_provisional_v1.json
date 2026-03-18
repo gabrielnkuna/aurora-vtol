@@ -1,6 +1,6 @@
 {
   "schema_version": "aurora-vtol.effectiveness.v1",
-  "table_name": "aurora-vtol-ring32-provisional-v1",
+  "table_name": "aurora-vtol-ring32-reviewed-candidate-v1-table",
   "segment_count": 32,
   "fan_count": 16,
   "plenum_count": 32,
@@ -1641,7 +1641,7 @@
     ]
   ],
   "axial_scale_by_segment": [
-    1.0,
+    0.95,
     1.0,
     1.0,
     1.0,
@@ -1742,5 +1742,5 @@
     1.0,
     1.0
   ],
-  "provenance": "provisional seeded from current Aurora topology influence model; not CAD- or CFD-derived"
+  "provenance": "bench-derived reviewed candidate with measured vane effectiveness changes"
 }

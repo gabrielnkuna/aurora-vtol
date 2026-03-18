@@ -47,12 +47,14 @@ from aurora_vtol.effectiveness_workflows import (
     build_effectiveness_comparison_report,
     build_effectiveness_promotion_report,
     build_effectiveness_report,
+    build_effectiveness_switch_report,
     build_effectiveness_validation_report,
     write_effectiveness_adoption_outputs,
     write_effectiveness_candidate_template_outputs,
     write_effectiveness_comparison_outputs,
     write_effectiveness_promotion_outputs,
     write_effectiveness_report_outputs,
+    write_effectiveness_switch_outputs,
     write_effectiveness_validation_outputs,
 )
 
@@ -1811,6 +1813,36 @@ def alloc_effectiveness_promote(
         summary_out=summary_out,
         summary_format=summary_format,
     )
+    typer.echo(json.dumps(report, indent=2))
+
+
+@alloc_app.command("effectiveness-switch")
+def alloc_effectiveness_switch(
+    promotion_manifest: str = typer.Option("", "--promotion-manifest", help="Promotion manifest JSON from a staged effectiveness promotion pack"),
+    promotion_dir: str = typer.Option("", "--promotion-dir", help="Promotion pack directory containing promotion_manifest.json"),
+    target_override: str = typer.Option("", "--target-override", help="Optional override target path instead of the promotion manifest target path"),
+    apply: bool = typer.Option(True, "--apply/--no-apply", help="Apply the staged replacement to the target path; applying requires --out-dir for rollback artifacts"),
+    out_dir: str = typer.Option("", "--out-dir", help="Directory for switch summary, rollback backup, and switch manifest artifacts"),
+    summary_out: str = typer.Option("", "--summary-out", help="Optional switch summary path (.json, .md, .txt)"),
+    summary_format: str = typer.Option("auto", "--summary-format", help="Switch summary output format: auto, json, markdown, text"),
+):
+    try:
+        report, switch_context = build_effectiveness_switch_report(
+            promotion_manifest_path=promotion_manifest or None,
+            promotion_dir=promotion_dir or None,
+            target_path_override=target_override or None,
+        )
+        report = write_effectiveness_switch_outputs(
+            report,
+            switch_context,
+            out_dir=out_dir,
+            summary_out=summary_out,
+            summary_format=summary_format,
+            apply=apply,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
     typer.echo(json.dumps(report, indent=2))
 
 

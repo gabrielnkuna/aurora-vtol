@@ -106,6 +106,7 @@ uv run aurora-vtol alloc effectiveness-template --out-dir runs/effectiveness_can
 uv run aurora-vtol alloc effectiveness-validate --candidate-spec data/effectiveness_specs/aurora_ring32_candidate_template_v1.json --out-dir runs/effectiveness_validate_candidate_template
 uv run aurora-vtol alloc effectiveness-adoption --candidate-spec data/effectiveness_specs/aurora_ring32_candidate_template_v1.json --candidate-note docs/effectiveness_candidate_provenance_template.md --out-dir runs/effectiveness_adoption_candidate_template
 uv run aurora-vtol alloc effectiveness-promote --candidate-spec data/effectiveness_specs/aurora_ring32_candidate_template_v1.json --candidate-note docs/effectiveness_candidate_provenance_template.md --out-dir runs/effectiveness_promotion_candidate_template
+uv run aurora-vtol alloc effectiveness-switch --promotion-manifest runs/effectiveness_promotion_reviewed_candidate/promotion_manifest.json --out-dir runs/effectiveness_switch_reviewed_candidate
 uv run aurora-vtol alloc effectiveness-compare --candidate-table data/effectiveness/aurora_ring32_provisional_v1.json --out-dir runs/effectiveness_compare_geometry_vs_provisional
 uv run aurora-vtol alloc power-sweep --preset medium --continuous-power-kw 125 --continuous-power-kw 130
 uv run aurora-vtol alloc maneuver-pack --profile step-snap-eco --maneuver-safe --out-dir runs/maneuver_pack_step_snap_eco_demo

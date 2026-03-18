@@ -188,6 +188,26 @@ This writes a promotion pack, including:
 - `promotion_manifest.json`
 - `staged/<target-basename>.json`
 
+### `aurora-vtol alloc effectiveness-switch`
+
+Apply a staged promotion pack to the chosen baseline target with backup and rollback artifacts.
+
+Use this after `effectiveness-promote` when the promotion pack is already `staged` and you want one controlled step that updates the target asset while preserving the prior baseline. Applying requires `--out-dir` so the rollback trail is written alongside the switch report.
+
+Example:
+
+```bash
+uv run aurora-vtol alloc effectiveness-switch   --promotion-manifest runs/effectiveness_promotion_reviewed_candidate/promotion_manifest.json   --out-dir runs/effectiveness_switch_reviewed_candidate
+```
+
+This writes a switch pack, including:
+
+- `summary.json`
+- `summary.md`
+- `switch_manifest.json`
+- `backup/<target-basename>.json`
+- `applied/<target-basename>.json`
+
 ### `aurora-vtol alloc effectiveness-compare`
 
 Compare a candidate effectiveness source against the current baseline.
