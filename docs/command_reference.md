@@ -129,6 +129,25 @@ This writes:
 - `candidate_spec.json`
 - `provenance_template.md`
 
+### `aurora-vtol alloc effectiveness-validate`
+
+Validate whether a candidate still looks like scaffolding before comparison or adoption.
+
+Use this to catch template-like naming, placeholder provenance, unchanged-from-baseline candidates, and other obvious incompleteness signals.
+
+Example:
+
+```bash
+uv run aurora-vtol alloc effectiveness-validate   --candidate-spec data/effectiveness_specs/aurora_ring32_candidate_template_v1.json   --out-dir runs/effectiveness_validate_candidate_template
+```
+
+This writes a validation pack, including:
+
+- `summary.json`
+- `summary.md`
+- `baseline_table.json`
+- `candidate_table.json`
+
 ### `aurora-vtol alloc effectiveness-compare`
 
 Compare a candidate effectiveness source against the current baseline.

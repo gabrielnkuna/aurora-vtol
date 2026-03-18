@@ -197,6 +197,14 @@ The tracked examples are:
 
 Use them as the starting point for future CAD-, CFD-, or bench-derived candidates. They are scaffolding, not validated coefficients.
 
+Before comparing or adopting a candidate, run the validation gate:
+
+```bash
+uv run aurora-vtol alloc effectiveness-validate   --candidate-spec data/effectiveness_specs/aurora_ring32_candidate_template_v1.json   --out-dir runs/effectiveness_validate_candidate_template
+```
+
+That command is intentionally strict about obvious scaffolding signals like template identity, placeholder provenance, and unchanged baseline-like content.
+
 ## Recommended next upgrades
 
 1. replace the provisional geometry-seeded spec with a CAD-, CFD-, or test-derived spec

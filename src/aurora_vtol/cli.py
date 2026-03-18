@@ -45,9 +45,11 @@ from aurora_vtol.maneuver_analysis import render_maneuver_pack_markdown, tune_ma
 from aurora_vtol.effectiveness_workflows import (
     build_effectiveness_comparison_report,
     build_effectiveness_report,
+    build_effectiveness_validation_report,
     write_effectiveness_candidate_template_outputs,
     write_effectiveness_comparison_outputs,
     write_effectiveness_report_outputs,
+    write_effectiveness_validation_outputs,
 )
 
 
@@ -1690,6 +1692,41 @@ def alloc_effectiveness_template(
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(report, indent=2))
+
+
+@alloc_app.command("effectiveness-validate")
+def alloc_effectiveness_validate(
+    candidate_spec: str = typer.Option("", "--candidate-spec", help="Candidate geometry-seed spec JSON to validate before comparison"),
+    candidate_table: str = typer.Option("", "--candidate-table", help="Candidate materialized table JSON to validate before comparison"),
+    baseline_spec: str = typer.Option("", "--baseline-spec", help="Optional baseline geometry-seed spec JSON; defaults to the built-in Aurora ring32 seed"),
+    baseline_table: str = typer.Option("", "--baseline-table", help="Optional baseline materialized table JSON instead of --baseline-spec"),
+    delta_tol: float = typer.Option(1e-9, "--delta-tol", help="Tolerance below which a candidate is treated as unchanged from baseline"),
+    out_dir: str = typer.Option("", "--out-dir", help="Optional directory for validation artifacts"),
+    summary_out: str = typer.Option("", "--summary-out", help="Optional validation summary path (.json, .md, .txt)"),
+    summary_format: str = typer.Option("auto", "--summary-format", help="Validation summary output format: auto, json, markdown, text"),
+):
+    try:
+        report, baseline_table_obj, baseline_spec_obj, candidate_table_obj, candidate_spec_obj = build_effectiveness_validation_report(
+            candidate_spec_path=candidate_spec or None,
+            candidate_table_path=candidate_table or None,
+            baseline_spec_path=baseline_spec or None,
+            baseline_table_path=baseline_table or None,
+            delta_tolerance=delta_tol,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    report = write_effectiveness_validation_outputs(
+        report,
+        baseline_table_obj,
+        candidate_table_obj,
+        baseline_spec=baseline_spec_obj,
+        candidate_spec=candidate_spec_obj,
+        out_dir=out_dir,
+        summary_out=summary_out,
+        summary_format=summary_format,
+    )
     typer.echo(json.dumps(report, indent=2))
 
 

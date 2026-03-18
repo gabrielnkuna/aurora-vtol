@@ -8,13 +8,16 @@ from aurora_vtol.effectiveness_workflows import (
     build_effectiveness_candidate_template,
     build_effectiveness_comparison_report,
     build_effectiveness_report,
+    build_effectiveness_validation_report,
     infer_effectiveness_summary_format,
     render_effectiveness_candidate_provenance_note,
     render_effectiveness_comparison_report,
     render_effectiveness_report,
+    render_effectiveness_validation_report,
     write_effectiveness_candidate_template_outputs,
     write_effectiveness_comparison_outputs,
     write_effectiveness_report_outputs,
+    write_effectiveness_validation_outputs,
 )
 
 
@@ -62,6 +65,14 @@ class EffectivenessWorkflowTests(unittest.TestCase):
             self.assertIn('template_spec_name', report)
             self.assertIn('warnings', report)
 
+    def test_build_effectiveness_validation_report_flags_template_candidate(self):
+        report, _baseline_table, _baseline_spec, _candidate_table, _candidate_spec = build_effectiveness_validation_report(
+            candidate_spec_path=Path('data/effectiveness_specs/aurora_ring32_candidate_template_v1.json')
+        )
+        self.assertEqual(report['status'], 'risk')
+        self.assertTrue(report['blocking_issues'])
+        self.assertTrue(any('template' in item.lower() or 'placeholder' in item.lower() for item in report['blocking_issues']))
+
     def test_build_effectiveness_comparison_report_requires_candidate(self):
         with self.assertRaises(ValueError):
             build_effectiveness_comparison_report()
@@ -88,6 +99,40 @@ class EffectivenessWorkflowTests(unittest.TestCase):
         self.assertIn('# effectiveness report', rendered)
         self.assertIn('## Fan Weight Summary', rendered)
         self.assertIn('## Warnings', rendered)
+
+    def test_render_effectiveness_validation_report_markdown_has_sections(self):
+        report, _baseline_table, _baseline_spec, _candidate_table, _candidate_spec = build_effectiveness_validation_report(
+            candidate_spec_path=Path('data/effectiveness_specs/aurora_ring32_candidate_template_v1.json')
+        )
+        rendered = render_effectiveness_validation_report(report, format_name='markdown')
+        self.assertIn('# effectiveness validation', rendered)
+        self.assertIn('## Blocking Issues', rendered)
+        self.assertIn('## Passed Checks', rendered)
+
+    def test_write_effectiveness_validation_outputs_writes_artifacts(self):
+        report, baseline_table, baseline_spec, candidate_table, candidate_spec = build_effectiveness_validation_report(
+            candidate_spec_path=Path('data/effectiveness_specs/aurora_ring32_candidate_template_v1.json')
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / 'effectiveness_validate'
+            summary_out = out_dir / 'validate.txt'
+            updated = write_effectiveness_validation_outputs(
+                report,
+                baseline_table,
+                candidate_table,
+                baseline_spec=baseline_spec,
+                candidate_spec=candidate_spec,
+                out_dir=str(out_dir),
+                summary_out=str(summary_out),
+                summary_format='auto',
+            )
+            self.assertTrue((out_dir / 'summary.json').exists())
+            self.assertTrue((out_dir / 'summary.md').exists())
+            self.assertTrue((out_dir / 'candidate_table.json').exists())
+            self.assertTrue(summary_out.exists())
+            loaded = json.loads((out_dir / 'summary.json').read_text(encoding='utf-8'))
+            self.assertEqual(loaded['status'], 'risk')
+            self.assertEqual(updated['summary_format'], 'text')
 
     def test_render_effectiveness_comparison_report_markdown_has_sections(self):
         report, _baseline_table, _baseline_spec, _candidate_table, _candidate_spec = build_effectiveness_comparison_report(

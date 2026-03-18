@@ -310,6 +310,110 @@ def build_effectiveness_comparison_report(
     return report, baseline_table, baseline_spec, candidate_table, candidate_spec
 
 
+def _is_placeholder_text(value: str | None) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return True
+    markers = ("todo", "replace", "template", "placeholder", "tbd")
+    return any(marker in text for marker in markers)
+
+
+def build_effectiveness_validation_report(
+    *,
+    candidate_spec_path: str | Path | None = None,
+    candidate_table_path: str | Path | None = None,
+    baseline_spec_path: str | Path | None = None,
+    baseline_table_path: str | Path | None = None,
+    delta_tolerance: float = 1e-9,
+) -> tuple[dict, NominalEffectivenessTable, GeometrySeedSpec | None, NominalEffectivenessTable, GeometrySeedSpec | None]:
+    if delta_tolerance < 0.0:
+        raise ValueError("delta_tolerance must be non-negative")
+    baseline_payload, baseline_table, baseline_spec = _resolve_effectiveness_source(
+        spec_path=baseline_spec_path,
+        table_path=baseline_table_path,
+        default_to_geometry_seed=True,
+    )
+    candidate_payload, candidate_table, candidate_spec = _resolve_effectiveness_source(
+        spec_path=candidate_spec_path,
+        table_path=candidate_table_path,
+        default_to_geometry_seed=False,
+    )
+    compatibility = {
+        "segment_count_match": int(baseline_table.segment_count) == int(candidate_table.segment_count),
+        "fan_count_match": int(baseline_table.fan_count) == int(candidate_table.fan_count),
+        "plenum_count_match": int(baseline_table.plenum_count) == int(candidate_table.plenum_count),
+    }
+    compatibility["comparable"] = all(compatibility.values())
+    delta_summary = _delta_summary(baseline_table, candidate_table) if compatibility["comparable"] else None
+
+    if candidate_spec is not None:
+        candidate_identity = str(candidate_spec.spec_name)
+        candidate_provenance = str(candidate_spec.provenance)
+    else:
+        candidate_identity = str(candidate_payload["table_summary"]["table_name"])
+        candidate_provenance = str(candidate_table.provenance)
+
+    blocking_issues: list[str] = []
+    advisory_issues: list[str] = []
+    passed_checks: list[str] = []
+
+    if _is_placeholder_text(candidate_identity):
+        blocking_issues.append("Candidate identity still looks like a template or placeholder name.")
+    else:
+        passed_checks.append("Candidate identity is not obviously template-like.")
+
+    if _is_placeholder_text(candidate_provenance):
+        blocking_issues.append("Candidate provenance still contains placeholder language or missing detail.")
+    else:
+        passed_checks.append("Candidate provenance is populated beyond template placeholders.")
+
+    if not compatibility["comparable"]:
+        blocking_issues.append("Candidate is not shape-compatible with the current baseline.")
+    else:
+        passed_checks.append("Candidate is shape-compatible with the current baseline.")
+        assert delta_summary is not None
+        if all(abs(value) <= delta_tolerance for value in delta_summary.values()):
+            blocking_issues.append("Candidate does not differ from the current baseline within the configured tolerance.")
+        else:
+            passed_checks.append("Candidate differs from the current baseline beyond the configured tolerance.")
+
+    if (
+        np.allclose(candidate_table.axial_scale_by_segment, 1.0)
+        and np.allclose(candidate_table.radial_scale_by_segment, 1.0)
+        and np.allclose(candidate_table.tangential_scale_by_segment, 1.0)
+    ):
+        advisory_issues.append("Candidate component scales are still uniform unity values.")
+    else:
+        passed_checks.append("Candidate includes non-unity component-scale information.")
+
+    if candidate_spec is not None and np.all(candidate_spec.plenum_half_span_deg <= 1e-9) and np.all(candidate_spec.plenum_sigma_deg <= 1e-9):
+        advisory_issues.append("Candidate nominal plenum coupling is still point-owned with no spillover.")
+    elif candidate_spec is not None:
+        passed_checks.append("Candidate includes non-trivial plenum coupling assumptions.")
+
+    if blocking_issues:
+        status = "risk"
+    elif advisory_issues:
+        status = "caution"
+    else:
+        status = "pass"
+
+    report = {
+        "status": status,
+        "delta_tolerance": float(delta_tolerance),
+        "baseline": baseline_payload,
+        "candidate": candidate_payload,
+        "candidate_identity": candidate_identity,
+        "candidate_provenance": candidate_provenance,
+        "compatibility": compatibility,
+        "delta_summary": delta_summary,
+        "blocking_issues": blocking_issues,
+        "advisory_issues": advisory_issues,
+        "passed_checks": passed_checks,
+        "warnings": list(blocking_issues) + list(advisory_issues),
+    }
+    return report, baseline_table, baseline_spec, candidate_table, candidate_spec
+
 def infer_effectiveness_summary_format(path: str, format_name: str) -> str:
     if format_name != "auto":
         return format_name
@@ -582,6 +686,124 @@ def write_effectiveness_comparison_outputs(
         updated["summary_format"] = resolved_format
 
     return updated
+
+def render_effectiveness_validation_report(report: dict, *, format_name: str) -> str:
+    if format_name == "json":
+        return json.dumps(report, indent=2)
+    sections = []
+    sections.append(_render_mapping_section("Validation Result", {
+        "status": report.get("status"),
+        "delta_tolerance": report.get("delta_tolerance"),
+        "candidate_identity": report.get("candidate_identity"),
+    }, format_name=format_name))
+    baseline = dict(report.get("baseline", {}))
+    candidate = dict(report.get("candidate", {}))
+    sections.append(_render_mapping_section("Baseline Source", {
+        "source_kind": baseline.get("source_kind"),
+        "source_path": baseline.get("source_path"),
+    }, format_name=format_name))
+    sections.append(_render_mapping_section("Candidate Source", {
+        "source_kind": candidate.get("source_kind"),
+        "source_path": candidate.get("source_path"),
+    }, format_name=format_name))
+    sections.append(_render_mapping_section("Compatibility", report.get("compatibility", {}), format_name=format_name))
+    if isinstance(report.get("delta_summary"), dict):
+        sections.append(_render_mapping_section("Delta Summary", report["delta_summary"], format_name=format_name))
+    if format_name == "markdown":
+        lines = ["# effectiveness validation", ""]
+        lines.extend(section for section in sections if section)
+        lines.append("## Blocking Issues")
+        lines.append("")
+        blocking = list(report.get("blocking_issues", []))
+        lines.extend(f"- {item}" for item in blocking) if blocking else lines.append("- none")
+        lines.append("")
+        lines.append("## Advisory Issues")
+        lines.append("")
+        advisory = list(report.get("advisory_issues", []))
+        lines.extend(f"- {item}" for item in advisory) if advisory else lines.append("- none")
+        lines.append("")
+        lines.append("## Passed Checks")
+        lines.append("")
+        passed = list(report.get("passed_checks", []))
+        lines.extend(f"- {item}" for item in passed) if passed else lines.append("- none")
+        lines.append("")
+        return "\n".join(lines)
+    lines = ["effectiveness validation", ""]
+    lines.extend(section for section in sections if section)
+    for title, key in (("Blocking Issues", "blocking_issues"), ("Advisory Issues", "advisory_issues"), ("Passed Checks", "passed_checks")):
+        lines.append(title)
+        items = list(report.get(key, []))
+        if items:
+            lines.extend(f"- {item}" for item in items)
+        else:
+            lines.append("- none")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def write_effectiveness_validation_outputs(
+    report: dict,
+    baseline_table: NominalEffectivenessTable,
+    candidate_table: NominalEffectivenessTable,
+    *,
+    baseline_spec: GeometrySeedSpec | None = None,
+    candidate_spec: GeometrySeedSpec | None = None,
+    out_dir: str = "",
+    summary_out: str = "",
+    summary_format: str = "auto",
+) -> dict:
+    updated = dict(report)
+    artifacts = dict(updated.get("artifacts", {}))
+
+    def write_json(path: Path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    baseline_table_payload = effectiveness_table_to_payload(baseline_table)
+    candidate_table_payload = effectiveness_table_to_payload(candidate_table)
+    baseline_source_payload = geometry_seed_spec_to_payload(baseline_spec) if baseline_spec is not None else baseline_table_payload
+    candidate_source_payload = geometry_seed_spec_to_payload(candidate_spec) if candidate_spec is not None else candidate_table_payload
+
+    if out_dir:
+        out_path = Path(out_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        artifacts.update({
+            "summary_json": str(out_path / "summary.json"),
+            "summary_markdown": str(out_path / "summary.md"),
+            "baseline_table": str(out_path / "baseline_table.json"),
+            "candidate_table": str(out_path / "candidate_table.json"),
+            "baseline_source": str(out_path / ("baseline_spec.json" if baseline_spec is not None else "baseline_source_table.json")),
+            "candidate_source": str(out_path / ("candidate_spec.json" if candidate_spec is not None else "candidate_source_table.json")),
+        })
+
+    if artifacts:
+        updated["artifacts"] = artifacts
+
+    if out_dir:
+        write_json(Path(artifacts["summary_json"]), updated)
+        markdown = render_effectiveness_validation_report(updated, format_name="markdown")
+        Path(artifacts["summary_markdown"]).write_text(
+            markdown + ("" if markdown.endswith("\n") else "\n"),
+            encoding="utf-8",
+        )
+        write_json(Path(artifacts["baseline_table"]), baseline_table_payload)
+        write_json(Path(artifacts["candidate_table"]), candidate_table_payload)
+        write_json(Path(artifacts["baseline_source"]), baseline_source_payload)
+        write_json(Path(artifacts["candidate_source"]), candidate_source_payload)
+
+    if summary_out:
+        resolved_format = infer_effectiveness_summary_format(summary_out, summary_format)
+        rendered = render_effectiveness_validation_report(updated, format_name=resolved_format)
+        summary_path = Path(summary_out)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(
+            rendered + ("" if rendered.endswith("\n") else "\n"),
+            encoding="utf-8",
+        )
+        updated["summary_format"] = resolved_format
+
+    return updated
+
 
 def build_effectiveness_candidate_template(
     *,
