@@ -112,6 +112,25 @@ This writes a small artifact pack, including:
 - `materialized_table.json`
 - `source_spec.json` when the source is a geometry seed
 
+### `aurora-vtol alloc effectiveness-compare`
+
+Compare a candidate effectiveness source against the current baseline.
+
+Use this when a future CAD-, CFD-, or bench-derived candidate arrives and you want a compact diff instead of a manual JSON inspection.
+
+Example:
+
+```bash
+uv run aurora-vtol alloc effectiveness-compare   --candidate-table data/effectiveness/aurora_ring32_provisional_v1.json   --out-dir runs/effectiveness_compare_geometry_vs_provisional
+```
+
+This writes a comparison pack, including:
+
+- `summary.json`
+- `summary.md`
+- `baseline_table.json`
+- `candidate_table.json`
+
 ### `aurora-vtol alloc power-sweep`
 
 Sweep plant assumptions such as continuous power, hover power, voltage, or resistance.

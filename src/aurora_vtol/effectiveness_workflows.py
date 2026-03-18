@@ -97,7 +97,7 @@ def _component_scale_summary(table: NominalEffectivenessTable) -> dict:
     }
 
 
-def _build_warnings(
+def _build_report_warnings(
     *,
     spec: GeometrySeedSpec | None,
     table: NominalEffectivenessTable,
@@ -140,13 +140,18 @@ def _build_warnings(
     return warnings
 
 
-def build_effectiveness_report(
+def _resolve_effectiveness_source(
     *,
     spec_path: str | Path | None = None,
     table_path: str | Path | None = None,
+    default_to_geometry_seed: bool,
 ) -> tuple[dict, NominalEffectivenessTable, GeometrySeedSpec | None]:
     if spec_path and table_path:
         raise ValueError("Provide either spec_path or table_path, not both.")
+    if not spec_path and not table_path:
+        if not default_to_geometry_seed:
+            raise ValueError("Provide at least one of --candidate-spec or --candidate-table.")
+        spec_path = DEFAULT_GEOMETRY_SEED_SPEC
 
     spec: GeometrySeedSpec | None = None
     if table_path:
@@ -154,23 +159,39 @@ def build_effectiveness_report(
         table = load_effectiveness_table(resolved_source)
         source_kind = "table"
     else:
-        resolved_source = Path(spec_path).resolve() if spec_path else DEFAULT_GEOMETRY_SEED_SPEC.resolve()
+        resolved_source = Path(spec_path).resolve()
         spec = load_geometry_seed_spec(resolved_source)
         table = build_effectiveness_table_from_geometry_seed(spec)
         source_kind = "geometry-seed"
 
-    fan_weight_summary = _weight_summary(table.fan_segment_weights)
-    plenum_weight_summary = _weight_summary(table.plenum_segment_weights)
-    component_scale_summary = _component_scale_summary(table)
-    report = {
+    payload = {
         "source_kind": source_kind,
         "source_path": _relative_repo_path(resolved_source),
         "spec_summary": summarize_geometry_seed_spec(spec) if spec is not None else None,
         "table_summary": summarize_effectiveness_table(table),
+    }
+    return payload, table, spec
+
+
+def build_effectiveness_report(
+    *,
+    spec_path: str | Path | None = None,
+    table_path: str | Path | None = None,
+) -> tuple[dict, NominalEffectivenessTable, GeometrySeedSpec | None]:
+    source_payload, table, spec = _resolve_effectiveness_source(
+        spec_path=spec_path,
+        table_path=table_path,
+        default_to_geometry_seed=True,
+    )
+    fan_weight_summary = _weight_summary(table.fan_segment_weights)
+    plenum_weight_summary = _weight_summary(table.plenum_segment_weights)
+    component_scale_summary = _component_scale_summary(table)
+    report = {
+        **source_payload,
         "fan_weight_summary": fan_weight_summary,
         "plenum_weight_summary": plenum_weight_summary,
         "component_scale_summary": component_scale_summary,
-        "warnings": _build_warnings(
+        "warnings": _build_report_warnings(
             spec=spec,
             table=table,
             fan_weight_summary=fan_weight_summary,
@@ -179,6 +200,110 @@ def build_effectiveness_report(
         ),
     }
     return report, table, spec
+
+
+def _delta_summary(baseline_table: NominalEffectivenessTable, candidate_table: NominalEffectivenessTable) -> dict:
+    return {
+        "fan_weight_max_abs_delta": float(np.max(np.abs(candidate_table.fan_segment_weights - baseline_table.fan_segment_weights))),
+        "fan_weight_mean_abs_delta": float(np.mean(np.abs(candidate_table.fan_segment_weights - baseline_table.fan_segment_weights))),
+        "plenum_weight_max_abs_delta": float(np.max(np.abs(candidate_table.plenum_segment_weights - baseline_table.plenum_segment_weights))),
+        "plenum_weight_mean_abs_delta": float(np.mean(np.abs(candidate_table.plenum_segment_weights - baseline_table.plenum_segment_weights))),
+        "axial_scale_max_abs_delta": float(np.max(np.abs(candidate_table.axial_scale_by_segment - baseline_table.axial_scale_by_segment))),
+        "axial_scale_mean_abs_delta": float(np.mean(np.abs(candidate_table.axial_scale_by_segment - baseline_table.axial_scale_by_segment))),
+        "radial_scale_max_abs_delta": float(np.max(np.abs(candidate_table.radial_scale_by_segment - baseline_table.radial_scale_by_segment))),
+        "radial_scale_mean_abs_delta": float(np.mean(np.abs(candidate_table.radial_scale_by_segment - baseline_table.radial_scale_by_segment))),
+        "tangential_scale_max_abs_delta": float(np.max(np.abs(candidate_table.tangential_scale_by_segment - baseline_table.tangential_scale_by_segment))),
+        "tangential_scale_mean_abs_delta": float(np.mean(np.abs(candidate_table.tangential_scale_by_segment - baseline_table.tangential_scale_by_segment))),
+    }
+
+
+def _build_comparison_warnings(
+    *,
+    baseline_payload: dict,
+    baseline_table: NominalEffectivenessTable,
+    baseline_spec: GeometrySeedSpec | None,
+    candidate_payload: dict,
+    candidate_table: NominalEffectivenessTable,
+    candidate_spec: GeometrySeedSpec | None,
+    compatibility: dict,
+    delta_summary: dict | None,
+) -> list[str]:
+    warnings: list[str] = []
+    for label, spec, table in (
+        ("baseline", baseline_spec, baseline_table),
+        ("candidate", candidate_spec, candidate_table),
+    ):
+        provenance = str(spec.provenance if spec is not None else table.provenance).lower()
+        if "provisional" in provenance:
+            warnings.append(
+                f"{label.title()} effectiveness source is still provisional, not CAD-, CFD-, or bench-validated hardware truth."
+            )
+    if not compatibility["comparable"]:
+        warnings.append(
+            "Baseline and candidate sources are not shape-compatible, so weight and scale deltas were not computed."
+        )
+        return warnings
+    assert delta_summary is not None
+    if all(abs(delta_summary[key]) <= 1e-12 for key in delta_summary):
+        warnings.append("Candidate effectiveness source matches the baseline exactly within numerical tolerance.")
+    if candidate_payload["source_path"] == baseline_payload["source_path"]:
+        warnings.append("Baseline and candidate resolve to the same source path.")
+    if (
+        candidate_spec is not None
+        and np.all(candidate_spec.plenum_half_span_deg <= 1e-9)
+        and np.all(candidate_spec.plenum_sigma_deg <= 1e-9)
+    ):
+        warnings.append("Candidate nominal plenum coupling is still point-owned with no spillover.")
+    if (
+        np.allclose(candidate_table.axial_scale_by_segment, 1.0)
+        and np.allclose(candidate_table.radial_scale_by_segment, 1.0)
+        and np.allclose(candidate_table.tangential_scale_by_segment, 1.0)
+    ):
+        warnings.append("Candidate component scales are still uniform unity values.")
+    return warnings
+
+
+def build_effectiveness_comparison_report(
+    *,
+    candidate_spec_path: str | Path | None = None,
+    candidate_table_path: str | Path | None = None,
+    baseline_spec_path: str | Path | None = None,
+    baseline_table_path: str | Path | None = None,
+) -> tuple[dict, NominalEffectivenessTable, GeometrySeedSpec | None, NominalEffectivenessTable, GeometrySeedSpec | None]:
+    baseline_payload, baseline_table, baseline_spec = _resolve_effectiveness_source(
+        spec_path=baseline_spec_path,
+        table_path=baseline_table_path,
+        default_to_geometry_seed=True,
+    )
+    candidate_payload, candidate_table, candidate_spec = _resolve_effectiveness_source(
+        spec_path=candidate_spec_path,
+        table_path=candidate_table_path,
+        default_to_geometry_seed=False,
+    )
+    compatibility = {
+        "segment_count_match": int(baseline_table.segment_count) == int(candidate_table.segment_count),
+        "fan_count_match": int(baseline_table.fan_count) == int(candidate_table.fan_count),
+        "plenum_count_match": int(baseline_table.plenum_count) == int(candidate_table.plenum_count),
+    }
+    compatibility["comparable"] = all(compatibility.values())
+    delta_summary = _delta_summary(baseline_table, candidate_table) if compatibility["comparable"] else None
+    report = {
+        "baseline": baseline_payload,
+        "candidate": candidate_payload,
+        "compatibility": compatibility,
+        "delta_summary": delta_summary,
+        "warnings": _build_comparison_warnings(
+            baseline_payload=baseline_payload,
+            baseline_table=baseline_table,
+            baseline_spec=baseline_spec,
+            candidate_payload=candidate_payload,
+            candidate_table=candidate_table,
+            candidate_spec=candidate_spec,
+            compatibility=compatibility,
+            delta_summary=delta_summary,
+        ),
+    }
+    return report, baseline_table, baseline_spec, candidate_table, candidate_spec
 
 
 def infer_effectiveness_summary_format(path: str, format_name: str) -> str:
@@ -236,40 +361,14 @@ def render_effectiveness_report(report: dict, *, format_name: str) -> str:
     sections.append(_render_mapping_section("Source", source_mapping, format_name=format_name))
     spec_summary = report.get("spec_summary")
     if isinstance(spec_summary, dict):
-        sections.append(
-            _render_mapping_section("Geometry Seed Summary", spec_summary, format_name=format_name)
-        )
-    sections.append(
-        _render_mapping_section(
-            "Effectiveness Table Summary",
-            report.get("table_summary", {}),
-            format_name=format_name,
-        )
-    )
-    sections.append(
-        _render_mapping_section(
-            "Fan Weight Summary",
-            report.get("fan_weight_summary", {}),
-            format_name=format_name,
-        )
-    )
-    sections.append(
-        _render_mapping_section(
-            "Plenum Weight Summary",
-            report.get("plenum_weight_summary", {}),
-            format_name=format_name,
-        )
-    )
+        sections.append(_render_mapping_section("Geometry Seed Summary", spec_summary, format_name=format_name))
+    sections.append(_render_mapping_section("Effectiveness Table Summary", report.get("table_summary", {}), format_name=format_name))
+    sections.append(_render_mapping_section("Fan Weight Summary", report.get("fan_weight_summary", {}), format_name=format_name))
+    sections.append(_render_mapping_section("Plenum Weight Summary", report.get("plenum_weight_summary", {}), format_name=format_name))
     component_summary = report.get("component_scale_summary", {})
     for name in ("axial", "radial", "tangential"):
         if isinstance(component_summary.get(name), dict):
-            sections.append(
-                _render_mapping_section(
-                    f"{name.title()} Scale Summary",
-                    component_summary[name],
-                    format_name=format_name,
-                )
-            )
+            sections.append(_render_mapping_section(f"{name.title()} Scale Summary", component_summary[name], format_name=format_name))
     warnings = list(report.get("warnings", []))
     if format_name == "markdown":
         lines = ["# effectiveness report", ""]
@@ -285,6 +384,46 @@ def render_effectiveness_report(report: dict, *, format_name: str) -> str:
     lines = ["effectiveness report", ""]
     lines.extend(section for section in sections if section)
     lines.append("Warnings")
+    if warnings:
+        lines.extend(f"- {warning}" for warning in warnings)
+    else:
+        lines.append("- none")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_effectiveness_comparison_report(report: dict, *, format_name: str) -> str:
+    if format_name == "json":
+        return json.dumps(report, indent=2)
+    sections = []
+    baseline = dict(report.get("baseline", {}))
+    candidate = dict(report.get("candidate", {}))
+    sections.append(_render_mapping_section(
+        "Baseline Source",
+        {"source_kind": baseline.get("source_kind"), "source_path": baseline.get("source_path")},
+        format_name=format_name,
+    ))
+    if isinstance(baseline.get("spec_summary"), dict):
+        sections.append(_render_mapping_section("Baseline Geometry Seed Summary", baseline["spec_summary"], format_name=format_name))
+    sections.append(_render_mapping_section("Baseline Table Summary", baseline.get("table_summary", {}), format_name=format_name))
+    sections.append(_render_mapping_section(
+        "Candidate Source",
+        {"source_kind": candidate.get("source_kind"), "source_path": candidate.get("source_path")},
+        format_name=format_name,
+    ))
+    if isinstance(candidate.get("spec_summary"), dict):
+        sections.append(_render_mapping_section("Candidate Geometry Seed Summary", candidate["spec_summary"], format_name=format_name))
+    sections.append(_render_mapping_section("Candidate Table Summary", candidate.get("table_summary", {}), format_name=format_name))
+    sections.append(_render_mapping_section("Compatibility", report.get("compatibility", {}), format_name=format_name))
+    if isinstance(report.get("delta_summary"), dict):
+        sections.append(_render_mapping_section("Delta Summary", report["delta_summary"], format_name=format_name))
+    warnings = list(report.get("warnings", []))
+    title = "# effectiveness comparison" if format_name == "markdown" else "effectiveness comparison"
+    lines = [title, ""]
+    lines.extend(section for section in sections if section)
+    warning_title = "## Warnings" if format_name == "markdown" else "Warnings"
+    lines.append(warning_title)
+    lines.append("")
     if warnings:
         lines.extend(f"- {warning}" for warning in warnings)
     else:
@@ -322,9 +461,7 @@ def write_effectiveness_report_outputs(
                 "summary_json": str(out_path / "summary.json"),
                 "summary_markdown": str(out_path / "summary.md"),
                 "materialized_table": str(out_path / "materialized_table.json"),
-                "source_payload": str(
-                    out_path / ("source_spec.json" if spec is not None else "source_table.json")
-                ),
+                "source_payload": str(out_path / ("source_spec.json" if spec is not None else "source_table.json")),
             }
         )
 
@@ -341,10 +478,7 @@ def write_effectiveness_report_outputs(
     if out_dir:
         write_json(Path(artifacts["summary_json"]), updated)
         markdown = render_effectiveness_report(updated, format_name="markdown")
-        Path(artifacts["summary_markdown"]).write_text(
-            markdown + ("" if markdown.endswith("\n") else "\n"),
-            encoding="utf-8",
-        )
+        Path(artifacts["summary_markdown"]).write_text(markdown + ("" if markdown.endswith("\n") else "\n"), encoding="utf-8")
         write_json(Path(artifacts["materialized_table"]), table_payload)
         write_json(Path(artifacts["source_payload"]), source_payload)
 
@@ -357,10 +491,90 @@ def write_effectiveness_report_outputs(
         rendered = render_effectiveness_report(updated, format_name=resolved_format)
         summary_path = Path(summary_out)
         summary_path.parent.mkdir(parents=True, exist_ok=True)
-        summary_path.write_text(
-            rendered + ("" if rendered.endswith("\n") else "\n"),
-            encoding="utf-8",
+        summary_path.write_text(rendered + ("" if rendered.endswith("\n") else "\n"), encoding="utf-8")
+        updated["summary_format"] = resolved_format
+
+    return updated
+
+
+def write_effectiveness_comparison_outputs(
+    report: dict,
+    baseline_table: NominalEffectivenessTable,
+    candidate_table: NominalEffectivenessTable,
+    *,
+    baseline_spec: GeometrySeedSpec | None = None,
+    candidate_spec: GeometrySeedSpec | None = None,
+    out_dir: str = "",
+    summary_out: str = "",
+    summary_format: str = "auto",
+    baseline_table_out: str = "",
+    candidate_table_out: str = "",
+    baseline_source_out: str = "",
+    candidate_source_out: str = "",
+) -> dict:
+    updated = dict(report)
+    artifacts = dict(updated.get("artifacts", {}))
+
+    def write_json(path: Path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    baseline_table_payload = effectiveness_table_to_payload(baseline_table)
+    candidate_table_payload = effectiveness_table_to_payload(candidate_table)
+    baseline_source_payload = geometry_seed_spec_to_payload(baseline_spec) if baseline_spec is not None else baseline_table_payload
+    candidate_source_payload = geometry_seed_spec_to_payload(candidate_spec) if candidate_spec is not None else candidate_table_payload
+
+    if out_dir:
+        out_path = Path(out_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        artifacts.update(
+            {
+                "summary_json": str(out_path / "summary.json"),
+                "summary_markdown": str(out_path / "summary.md"),
+                "baseline_table": str(out_path / "baseline_table.json"),
+                "candidate_table": str(out_path / "candidate_table.json"),
+                "baseline_source": str(out_path / ("baseline_spec.json" if baseline_spec is not None else "baseline_source_table.json")),
+                "candidate_source": str(out_path / ("candidate_spec.json" if candidate_spec is not None else "candidate_source_table.json")),
+            }
         )
+
+    if baseline_table_out:
+        artifacts["baseline_table"] = str(Path(baseline_table_out))
+    if candidate_table_out:
+        artifacts["candidate_table"] = str(Path(candidate_table_out))
+    if baseline_source_out:
+        artifacts["baseline_source"] = str(Path(baseline_source_out))
+    if candidate_source_out:
+        artifacts["candidate_source"] = str(Path(candidate_source_out))
+    if summary_out:
+        artifacts["summary_custom"] = str(Path(summary_out))
+
+    if artifacts:
+        updated["artifacts"] = artifacts
+
+    if out_dir:
+        write_json(Path(artifacts["summary_json"]), updated)
+        markdown = render_effectiveness_comparison_report(updated, format_name="markdown")
+        Path(artifacts["summary_markdown"]).write_text(markdown + ("" if markdown.endswith("\n") else "\n"), encoding="utf-8")
+        write_json(Path(artifacts["baseline_table"]), baseline_table_payload)
+        write_json(Path(artifacts["candidate_table"]), candidate_table_payload)
+        write_json(Path(artifacts["baseline_source"]), baseline_source_payload)
+        write_json(Path(artifacts["candidate_source"]), candidate_source_payload)
+
+    if baseline_table_out:
+        write_json(Path(baseline_table_out), baseline_table_payload)
+    if candidate_table_out:
+        write_json(Path(candidate_table_out), candidate_table_payload)
+    if baseline_source_out:
+        write_json(Path(baseline_source_out), baseline_source_payload)
+    if candidate_source_out:
+        write_json(Path(candidate_source_out), candidate_source_payload)
+    if summary_out:
+        resolved_format = infer_effectiveness_summary_format(summary_out, summary_format)
+        rendered = render_effectiveness_comparison_report(updated, format_name=resolved_format)
+        summary_path = Path(summary_out)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(rendered + ("" if rendered.endswith("\n") else "\n"), encoding="utf-8")
         updated["summary_format"] = resolved_format
 
     return updated

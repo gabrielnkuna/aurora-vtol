@@ -161,6 +161,22 @@ It does not yet prove:
 - the current table matches real duct, vane, or plenum geometry
 - the current table captures full 3D flow behavior
 
+## Candidate intake workflow
+
+Aurora now also has a comparison workflow for future candidate sources:
+
+```bash
+uv run aurora-vtol alloc effectiveness-compare   --candidate-table data/effectiveness/aurora_ring32_provisional_v1.json   --out-dir runs/effectiveness_compare_geometry_vs_provisional
+```
+
+This is the intended intake path for future CAD-, CFD-, or bench-derived candidates:
+
+- keep the current baseline explicit
+- materialize the candidate into the same software-facing table shape
+- review the delta report before swapping defaults
+
+That comparison workflow still does not validate physics by itself. It makes changes inspectable and versionable.
+
 ## Recommended next upgrades
 
 1. replace the provisional geometry-seeded spec with a CAD-, CFD-, or test-derived spec

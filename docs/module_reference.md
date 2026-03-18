@@ -85,6 +85,7 @@ Responsibilities:
 
 - materialize a nominal effectiveness table from a geometry seed or existing table
 - summarize fan, plenum, and component-scale assumptions
+- compare a candidate authority source against the current baseline
 - write reviewable artifact packs for hardware-facing authority assumptions
 
 ### `vehicle_controller.py`

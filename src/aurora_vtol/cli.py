@@ -42,7 +42,12 @@ from aurora_vtol.study_workflows import build_coordinate_mission_kwargs, build_p
 
 from aurora_vtol.fault_workflows import build_fault_spec, resolve_fault_case, run_fault_envelope_report, run_fault_threshold_pack_report, run_fault_threshold_report, select_fault_cases, summarize_fault_case
 from aurora_vtol.maneuver_analysis import render_maneuver_pack_markdown, tune_maneuver_profile
-from aurora_vtol.effectiveness_workflows import build_effectiveness_report, write_effectiveness_report_outputs
+from aurora_vtol.effectiveness_workflows import (
+    build_effectiveness_comparison_report,
+    build_effectiveness_report,
+    write_effectiveness_comparison_outputs,
+    write_effectiveness_report_outputs,
+)
 
 
 
@@ -1662,6 +1667,39 @@ def alloc_effectiveness_report(
         summary_format=summary_format,
         table_out=table_out,
         source_out=source_out,
+    )
+    typer.echo(json.dumps(report, indent=2))
+
+
+@alloc_app.command("effectiveness-compare")
+def alloc_effectiveness_compare(
+    candidate_spec: str = typer.Option("", "--candidate-spec", help="Candidate geometry-seed spec JSON to compare against the current baseline"),
+    candidate_table: str = typer.Option("", "--candidate-table", help="Candidate materialized effectiveness table JSON to compare against the current baseline"),
+    baseline_spec: str = typer.Option("", "--baseline-spec", help="Optional baseline geometry-seed spec JSON; defaults to the built-in Aurora ring32 seed"),
+    baseline_table: str = typer.Option("", "--baseline-table", help="Optional baseline materialized table JSON instead of --baseline-spec"),
+    out_dir: str = typer.Option("", "--out-dir", help="Optional directory for summary and normalized comparison artifacts"),
+    summary_out: str = typer.Option("", "--summary-out", help="Optional comparison summary path (.json, .md, .txt)"),
+    summary_format: str = typer.Option("auto", "--summary-format", help="Comparison summary output format: auto, json, markdown, text"),
+):
+    try:
+        report, baseline_table_obj, baseline_spec_obj, candidate_table_obj, candidate_spec_obj = build_effectiveness_comparison_report(
+            candidate_spec_path=candidate_spec or None,
+            candidate_table_path=candidate_table or None,
+            baseline_spec_path=baseline_spec or None,
+            baseline_table_path=baseline_table or None,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    report = write_effectiveness_comparison_outputs(
+        report,
+        baseline_table_obj,
+        candidate_table_obj,
+        baseline_spec=baseline_spec_obj,
+        candidate_spec=candidate_spec_obj,
+        out_dir=out_dir,
+        summary_out=summary_out,
+        summary_format=summary_format,
     )
     typer.echo(json.dumps(report, indent=2))
 

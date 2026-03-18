@@ -102,6 +102,7 @@ uv run aurora-vtol alloc step-snap --dir-b-deg 180 --maneuver-safe --eco --trace
 uv run aurora-vtol alloc coordinates --preset medium --power-safe --trace-out runs/trace_coordinates_medium.json
 uv run aurora-vtol alloc assess --trace runs/trace_coordinates_medium.json --format text
 uv run aurora-vtol alloc effectiveness-report --out-dir runs/effectiveness_report_geometry_seed
+uv run aurora-vtol alloc effectiveness-compare --candidate-table data/effectiveness/aurora_ring32_provisional_v1.json --out-dir runs/effectiveness_compare_geometry_vs_provisional
 uv run aurora-vtol alloc power-sweep --preset medium --continuous-power-kw 125 --continuous-power-kw 130
 uv run aurora-vtol alloc maneuver-pack --profile step-snap-eco --maneuver-safe --out-dir runs/maneuver_pack_step_snap_eco_demo
 ```
