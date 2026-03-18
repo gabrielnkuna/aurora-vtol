@@ -209,7 +209,13 @@ Then run the adoption gate once a provenance note exists:
 uv run aurora-vtol alloc effectiveness-adoption   --candidate-spec data/effectiveness_specs/aurora_ring32_candidate_template_v1.json   --candidate-note docs/effectiveness_candidate_provenance_template.md   --out-dir runs/effectiveness_adoption_candidate_template
 ```
 
-The validation gate is intentionally strict about obvious scaffolding signals like template identity, placeholder provenance, and unchanged baseline-like content. The adoption gate is stricter still: it expects explicit evidence fields, a reviewed or accepted validation state, and a materially meaningful change before a candidate is marked `adoptable`.
+If a candidate comes back `adoptable`, stage the replacement pack with promotion:
+
+```bash
+uv run aurora-vtol alloc effectiveness-promote   --candidate-spec data/effectiveness_specs/aurora_ring32_candidate_template_v1.json   --candidate-note docs/effectiveness_candidate_provenance_template.md   --out-dir runs/effectiveness_promotion_candidate_template
+```
+
+The validation gate is intentionally strict about obvious scaffolding signals like template identity, placeholder provenance, and unchanged baseline-like content. The adoption gate is stricter still: it expects explicit evidence fields, a reviewed or accepted validation state, and a materially meaningful change before a candidate is marked `adoptable`. The promotion gate only stages replacement when the candidate is already adoptable and the candidate source kind matches the chosen baseline target kind.
 
 ## Recommended next upgrades
 

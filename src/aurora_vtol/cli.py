@@ -45,11 +45,13 @@ from aurora_vtol.maneuver_analysis import render_maneuver_pack_markdown, tune_ma
 from aurora_vtol.effectiveness_workflows import (
     build_effectiveness_adoption_report,
     build_effectiveness_comparison_report,
+    build_effectiveness_promotion_report,
     build_effectiveness_report,
     build_effectiveness_validation_report,
     write_effectiveness_adoption_outputs,
     write_effectiveness_candidate_template_outputs,
     write_effectiveness_comparison_outputs,
+    write_effectiveness_promotion_outputs,
     write_effectiveness_report_outputs,
     write_effectiveness_validation_outputs,
 )
@@ -1759,6 +1761,46 @@ def alloc_effectiveness_adoption(
         raise typer.BadParameter(str(exc)) from exc
 
     report = write_effectiveness_adoption_outputs(
+        report,
+        baseline_table_obj,
+        candidate_table_obj,
+        baseline_spec=baseline_spec_obj,
+        candidate_spec=candidate_spec_obj,
+        candidate_note=candidate_note_obj,
+        out_dir=out_dir,
+        summary_out=summary_out,
+        summary_format=summary_format,
+    )
+    typer.echo(json.dumps(report, indent=2))
+
+
+@alloc_app.command("effectiveness-promote")
+def alloc_effectiveness_promote(
+    candidate_spec: str = typer.Option("", "--candidate-spec", help="Candidate geometry-seed spec JSON to stage for promotion"),
+    candidate_table: str = typer.Option("", "--candidate-table", help="Candidate materialized table JSON to stage for promotion"),
+    candidate_note: str = typer.Option("", "--candidate-note", help="Candidate provenance note markdown used to support promotion"),
+    baseline_spec: str = typer.Option("", "--baseline-spec", help="Optional baseline geometry-seed spec JSON; defaults to the built-in Aurora ring32 seed"),
+    baseline_table: str = typer.Option("", "--baseline-table", help="Optional baseline materialized table JSON instead of --baseline-spec"),
+    delta_tol: float = typer.Option(1e-9, "--delta-tol", help="Tolerance below which validation treats a candidate as unchanged from baseline"),
+    material_delta_tol: float = typer.Option(1e-6, "--material-delta-tol", help="Tolerance below which promotion treats a candidate as not materially different from baseline"),
+    out_dir: str = typer.Option("", "--out-dir", help="Optional directory for promotion assessment artifacts and staged replacement output"),
+    summary_out: str = typer.Option("", "--summary-out", help="Optional promotion summary path (.json, .md, .txt)"),
+    summary_format: str = typer.Option("auto", "--summary-format", help="Promotion summary output format: auto, json, markdown, text"),
+):
+    try:
+        report, baseline_table_obj, baseline_spec_obj, candidate_table_obj, candidate_spec_obj, candidate_note_obj = build_effectiveness_promotion_report(
+            candidate_spec_path=candidate_spec or None,
+            candidate_table_path=candidate_table or None,
+            candidate_note_path=candidate_note or None,
+            baseline_spec_path=baseline_spec or None,
+            baseline_table_path=baseline_table or None,
+            delta_tolerance=delta_tol,
+            material_delta_tolerance=material_delta_tol,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    report = write_effectiveness_promotion_outputs(
         report,
         baseline_table_obj,
         candidate_table_obj,

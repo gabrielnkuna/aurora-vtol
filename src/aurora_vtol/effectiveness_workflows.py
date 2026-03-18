@@ -1102,6 +1102,241 @@ def write_effectiveness_adoption_outputs(
         updated["summary_format"] = resolved_format
 
     return updated
+
+
+
+def build_effectiveness_promotion_report(
+    *,
+    candidate_spec_path: str | Path | None = None,
+    candidate_table_path: str | Path | None = None,
+    candidate_note_path: str | Path | None = None,
+    baseline_spec_path: str | Path | None = None,
+    baseline_table_path: str | Path | None = None,
+    delta_tolerance: float = 1e-9,
+    material_delta_tolerance: float = 1e-6,
+) -> tuple[dict, NominalEffectivenessTable, GeometrySeedSpec | None, NominalEffectivenessTable, GeometrySeedSpec | None, dict | None]:
+    adoption_report, baseline_table, baseline_spec, candidate_table, candidate_spec, candidate_note = build_effectiveness_adoption_report(
+        candidate_spec_path=candidate_spec_path,
+        candidate_table_path=candidate_table_path,
+        candidate_note_path=candidate_note_path,
+        baseline_spec_path=baseline_spec_path,
+        baseline_table_path=baseline_table_path,
+        delta_tolerance=delta_tolerance,
+        material_delta_tolerance=material_delta_tolerance,
+    )
+
+    blocking_issues: list[str] = []
+    review_notes: list[str] = []
+    passed_checks: list[str] = []
+
+    if adoption_report["adoption_status"] != "adoptable":
+        blocking_issues.append(
+            f"Candidate adoption status is {adoption_report['adoption_status']}, so promotion is blocked."
+        )
+    else:
+        passed_checks.append("Candidate is adoptable according to the adoption gate.")
+
+    baseline_kind = str(adoption_report["baseline"].get("source_kind") or "")
+    candidate_kind = str(adoption_report["candidate"].get("source_kind") or "")
+    target_path = str(adoption_report["baseline"].get("source_path") or "")
+    if baseline_kind != candidate_kind:
+        blocking_issues.append(
+            "Candidate source kind does not match the baseline target kind; stage promotion only after choosing a compatible baseline target."
+        )
+    else:
+        passed_checks.append("Candidate source kind matches the baseline target kind.")
+
+    if not target_path:
+        blocking_issues.append("Baseline target path is not available, so promotion cannot be staged.")
+        staged_replacement_basename = ""
+    else:
+        staged_replacement_basename = Path(target_path).name
+        passed_checks.append("Baseline target path resolved for staged replacement.")
+
+    if candidate_note is None:
+        review_notes.append("Promotion pack will not include a candidate note copy because no note was supplied.")
+    else:
+        passed_checks.append("Candidate note is available for the promotion pack.")
+
+    if blocking_issues:
+        promotion_status = "blocked"
+    else:
+        promotion_status = "staged"
+
+    report = {
+        "promotion_status": promotion_status,
+        "adoption_status": adoption_report["adoption_status"],
+        "target_kind": baseline_kind,
+        "target_path": target_path,
+        "staged_replacement_basename": staged_replacement_basename,
+        "delta_tolerance": float(delta_tolerance),
+        "material_delta_tolerance": float(material_delta_tolerance),
+        "baseline": adoption_report["baseline"],
+        "candidate": adoption_report["candidate"],
+        "candidate_identity": adoption_report["candidate_identity"],
+        "candidate_provenance": adoption_report["candidate_provenance"],
+        "candidate_note": adoption_report.get("candidate_note"),
+        "compatibility": adoption_report["compatibility"],
+        "delta_summary": adoption_report["delta_summary"],
+        "adoption_blocking_issues": list(adoption_report.get("blocking_issues", [])),
+        "adoption_review_notes": list(adoption_report.get("review_notes", [])),
+        "blocking_issues": blocking_issues,
+        "review_notes": review_notes,
+        "passed_checks": passed_checks,
+        "warnings": list(blocking_issues) + list(review_notes),
+    }
+    return report, baseline_table, baseline_spec, candidate_table, candidate_spec, candidate_note
+
+
+def render_effectiveness_promotion_report(report: dict, *, format_name: str) -> str:
+    if format_name == "json":
+        return json.dumps(report, indent=2)
+    sections = []
+    sections.append(_render_mapping_section("Promotion Result", {
+        "promotion_status": report.get("promotion_status"),
+        "adoption_status": report.get("adoption_status"),
+        "target_kind": report.get("target_kind"),
+        "target_path": report.get("target_path"),
+        "staged_replacement_basename": report.get("staged_replacement_basename"),
+        "candidate_identity": report.get("candidate_identity"),
+    }, format_name=format_name))
+    baseline = dict(report.get("baseline", {}))
+    candidate = dict(report.get("candidate", {}))
+    sections.append(_render_mapping_section("Baseline Source", {
+        "source_kind": baseline.get("source_kind"),
+        "source_path": baseline.get("source_path"),
+    }, format_name=format_name))
+    sections.append(_render_mapping_section("Candidate Source", {
+        "source_kind": candidate.get("source_kind"),
+        "source_path": candidate.get("source_path"),
+    }, format_name=format_name))
+    note = report.get("candidate_note")
+    if isinstance(note, dict):
+        note_fields = dict(note.get("fields", {}))
+        sections.append(_render_mapping_section("Candidate Note", {
+            "note_path": note.get("note_path"),
+            "source_type": note_fields.get("source_type"),
+            "validation_state": note_fields.get("validation_state"),
+            "reviewer": note_fields.get("reviewer"),
+        }, format_name=format_name))
+    if isinstance(report.get("delta_summary"), dict):
+        sections.append(_render_mapping_section("Delta Summary", report["delta_summary"], format_name=format_name))
+    if format_name == "markdown":
+        lines = ["# effectiveness promotion assessment", ""]
+        lines.extend(section for section in sections if section)
+        lines.append("## Blocking Issues")
+        lines.append("")
+        blocking = list(report.get("blocking_issues", []))
+        lines.extend(f"- {item}" for item in blocking) if blocking else lines.append("- none")
+        lines.append("")
+        lines.append("## Review Notes")
+        lines.append("")
+        review_notes = list(report.get("review_notes", []))
+        lines.extend(f"- {item}" for item in review_notes) if review_notes else lines.append("- none")
+        lines.append("")
+        lines.append("## Passed Checks")
+        lines.append("")
+        passed = list(report.get("passed_checks", []))
+        lines.extend(f"- {item}" for item in passed) if passed else lines.append("- none")
+        lines.append("")
+        return "\n".join(lines)
+    lines = ["effectiveness promotion assessment", ""]
+    lines.extend(section for section in sections if section)
+    for title, key in (("Blocking Issues", "blocking_issues"), ("Review Notes", "review_notes"), ("Passed Checks", "passed_checks")):
+        lines.append(title)
+        items = list(report.get(key, []))
+        if items:
+            lines.extend(f"- {item}" for item in items)
+        else:
+            lines.append("- none")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def write_effectiveness_promotion_outputs(
+    report: dict,
+    baseline_table: NominalEffectivenessTable,
+    candidate_table: NominalEffectivenessTable,
+    *,
+    baseline_spec: GeometrySeedSpec | None = None,
+    candidate_spec: GeometrySeedSpec | None = None,
+    candidate_note: dict | None = None,
+    out_dir: str = "",
+    summary_out: str = "",
+    summary_format: str = "auto",
+) -> dict:
+    updated = dict(report)
+    artifacts = dict(updated.get("artifacts", {}))
+
+    def write_json(path: Path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    baseline_source_payload = geometry_seed_spec_to_payload(baseline_spec) if baseline_spec is not None else effectiveness_table_to_payload(baseline_table)
+    candidate_source_payload = geometry_seed_spec_to_payload(candidate_spec) if candidate_spec is not None else effectiveness_table_to_payload(candidate_table)
+    staged_payload = candidate_source_payload
+
+    if out_dir:
+        out_path = Path(out_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        artifacts.update({
+            "summary_json": str(out_path / "summary.json"),
+            "summary_markdown": str(out_path / "summary.md"),
+            "promotion_manifest": str(out_path / "promotion_manifest.json"),
+            "baseline_source": str(out_path / ("baseline_spec.json" if baseline_spec is not None else "baseline_source_table.json")),
+            "candidate_source": str(out_path / ("candidate_spec.json" if candidate_spec is not None else "candidate_table.json")),
+        })
+        if candidate_note is not None:
+            artifacts["candidate_note_copy"] = str(out_path / "candidate_note.md")
+        staged_name = str(report.get("staged_replacement_basename") or "")
+        if updated.get("promotion_status") == "staged" and staged_name:
+            artifacts["staged_replacement"] = str(out_path / "staged" / staged_name)
+
+    if artifacts:
+        updated["artifacts"] = artifacts
+
+    manifest = {
+        "promotion_status": updated.get("promotion_status"),
+        "adoption_status": updated.get("adoption_status"),
+        "target_kind": updated.get("target_kind"),
+        "target_path": updated.get("target_path"),
+        "staged_replacement": artifacts.get("staged_replacement"),
+        "candidate_identity": updated.get("candidate_identity"),
+        "candidate_source_path": updated.get("candidate", {}).get("source_path"),
+        "candidate_note_path": updated.get("candidate_note", {}).get("note_path") if isinstance(updated.get("candidate_note"), dict) else None,
+    }
+
+    if out_dir:
+        write_json(Path(artifacts["summary_json"]), updated)
+        markdown = render_effectiveness_promotion_report(updated, format_name="markdown")
+        Path(artifacts["summary_markdown"]).write_text(
+            markdown + ("" if markdown.endswith("\n") else "\n"),
+            encoding="utf-8",
+        )
+        write_json(Path(artifacts["promotion_manifest"]), manifest)
+        write_json(Path(artifacts["baseline_source"]), baseline_source_payload)
+        write_json(Path(artifacts["candidate_source"]), candidate_source_payload)
+        if candidate_note is not None:
+            note_text = str(candidate_note.get("raw_text", ""))
+            Path(artifacts["candidate_note_copy"]).write_text(
+                note_text + ("" if note_text.endswith("\n") else "\n"),
+                encoding="utf-8",
+            )
+        if updated.get("promotion_status") == "staged" and artifacts.get("staged_replacement"):
+            write_json(Path(artifacts["staged_replacement"]), staged_payload)
+
+    if summary_out:
+        resolved_format = infer_effectiveness_summary_format(summary_out, summary_format)
+        rendered = render_effectiveness_promotion_report(updated, format_name=resolved_format)
+        summary_path = Path(summary_out)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(
+            rendered + ("" if rendered.endswith("\n") else "\n"),
+            encoding="utf-8",
+        )
+        updated["summary_format"] = resolved_format
+
+    return updated
 def build_effectiveness_candidate_template(
     *,
     spec_name: str | None = None,

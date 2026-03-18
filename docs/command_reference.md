@@ -168,6 +168,26 @@ This writes an adoption pack, including:
 - `candidate_note_fields.json`
 - `candidate_note.md`
 
+
+### `aurora-vtol alloc effectiveness-promote`
+
+Stage an adoptable candidate for baseline replacement without editing the live baseline in place.
+
+Use this when a candidate has already cleared the adoption gate and you want a promotion pack with the staged replacement asset, promotion manifest, and copied provenance trail.
+
+Example:
+
+```bash
+uv run aurora-vtol alloc effectiveness-promote   --candidate-spec data/effectiveness_specs/aurora_ring32_candidate_template_v1.json   --candidate-note docs/effectiveness_candidate_provenance_template.md   --out-dir runs/effectiveness_promotion_candidate_template
+```
+
+This writes a promotion pack, including:
+
+- `summary.json`
+- `summary.md`
+- `promotion_manifest.json`
+- `staged/<target-basename>.json`
+
 ### `aurora-vtol alloc effectiveness-compare`
 
 Compare a candidate effectiveness source against the current baseline.
