@@ -2,6 +2,8 @@
 
 Aurora is a software-first control, maneuver, and simulation stack for a 16-fan / 32-vane ring vehicle. The repository studies how guidance, vehicle control, control allocation, actuator dynamics, power limits, fault handling, and bridge tooling work together for a UFO-style VTOL concept.
 
+The repository is not a pitch deck. It is a working engineering platform you can clone, run, replay into Mission Planner or SITL-oriented paths, and scrutinize from source.
+
 This project is best understood as a flight-control and validation stack, not yet a complete aircraft implementation. It is designed to answer questions like:
 
 - Can the craft generate lateral force while holding yaw?
@@ -86,6 +88,14 @@ uv sync
 uv run aurora-vtol --help
 ```
 
+If you want Mission Planner replay, direct MAVLink bridge streaming, or `bridge sitl`, also install:
+
+```bash
+uv pip install pymavlink
+```
+
+For the full clone-to-CLI-to-Mission-Planner/SITL path, see [Setup and First Run](docs/setup.md).
+
 ### Core allocator and maneuver demos
 
 ```bash
@@ -124,6 +134,7 @@ python scripts/trace_to_tlog.py --trace runs/trace_coordinates_medium.json --out
 
 ## Documentation
 
+- [Setup and First Run](docs/setup.md)
 - [Architecture](docs/architecture.md)
 - [Module Reference](docs/module_reference.md)
 - [Engineering Notes](docs/engineering_notes.md)

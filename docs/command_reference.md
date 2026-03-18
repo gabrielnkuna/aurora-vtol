@@ -4,6 +4,7 @@ This document is the user-facing guide to the Aurora CLI. It focuses on what eac
 
 See also:
 
+- [Setup and First Run](setup.md)
 - [Architecture](architecture.md)
 - [Module Reference](module_reference.md)
 - [Bridge Workflows](bridge_workflows.md)

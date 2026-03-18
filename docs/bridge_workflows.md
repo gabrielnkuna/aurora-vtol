@@ -13,6 +13,7 @@ The bridge is not just export plumbing. It is a control-path component that must
 
 Related docs:
 
+- [Setup and First Run](setup.md)
 - [Architecture](architecture.md)
 - [Interface Control Document](icd.md)
 - [Engineering Review Checklist](engineering_review_checklist.md)
