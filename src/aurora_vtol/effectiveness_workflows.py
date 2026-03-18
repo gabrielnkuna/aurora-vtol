@@ -24,6 +24,10 @@ DEFAULT_GEOMETRY_SEED_SPEC = (
     / "effectiveness_specs"
     / "aurora_ring32_geometry_seed_v1.json"
 )
+DEFAULT_CANDIDATE_TEMPLATE_SPEC_NAME = "aurora-vtol-ring32-candidate-template-v1"
+DEFAULT_CANDIDATE_TEMPLATE_PROVENANCE = (
+    "candidate template; replace with actual CAD-, CFD-, or bench-derived provenance before use"
+)
 
 
 def _relative_repo_path(path: str | Path) -> str:
@@ -578,3 +582,110 @@ def write_effectiveness_comparison_outputs(
         updated["summary_format"] = resolved_format
 
     return updated
+
+def build_effectiveness_candidate_template(
+    *,
+    spec_name: str | None = None,
+    provenance: str | None = None,
+) -> dict:
+    spec = load_geometry_seed_spec(DEFAULT_GEOMETRY_SEED_SPEC)
+    payload = geometry_seed_spec_to_payload(spec)
+    payload["spec_name"] = str(spec_name or DEFAULT_CANDIDATE_TEMPLATE_SPEC_NAME)
+    payload["provenance"] = str(provenance or DEFAULT_CANDIDATE_TEMPLATE_PROVENANCE)
+    return payload
+
+
+def render_effectiveness_candidate_provenance_note(
+    *,
+    spec_name: str,
+    spec_path: str,
+) -> str:
+    lines = [
+        "# Aurora VTOL effectiveness candidate provenance note",
+        "",
+        "Use this note alongside a candidate effectiveness spec before promoting it into the live comparison flow.",
+        "",
+        "## Candidate identity",
+        "",
+        f"- spec_name: `{spec_name}`",
+        f"- spec_path: `{spec_path}`",
+        "- owner: TODO",
+        "- date_utc: TODO",
+        "",
+        "## Source evidence",
+        "",
+        "- source_type: TODO (CAD / CFD / bench / mixed)",
+        "- source_reference: TODO",
+        "- extraction_method: TODO",
+        "- source_revision: TODO",
+        "",
+        "## Assumptions",
+        "",
+        "- TODO: fan footprint assumptions",
+        "- TODO: plenum coupling assumptions",
+        "- TODO: component scale assumptions",
+        "",
+        "## Validation status",
+        "",
+        "- validation_state: TODO (unreviewed / provisional / reviewed / accepted)",
+        "- reviewer: TODO",
+        "- known_limitations: TODO",
+        "",
+        "## Change summary vs baseline",
+        "",
+        "- TODO: what changed relative to the current geometry-seeded baseline",
+        "- TODO: expected impact on allocator behavior",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def write_effectiveness_candidate_template_outputs(
+    *,
+    out_dir: str = "",
+    spec_out: str = "",
+    note_out: str = "",
+    spec_name: str | None = None,
+    provenance: str | None = None,
+) -> dict:
+    payload = build_effectiveness_candidate_template(spec_name=spec_name, provenance=provenance)
+    artifacts: dict[str, str] = {}
+
+    if out_dir:
+        out_path = Path(out_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        artifacts["candidate_spec"] = str(out_path / "candidate_spec.json")
+        artifacts["provenance_note"] = str(out_path / "provenance_template.md")
+    if spec_out:
+        artifacts["candidate_spec"] = str(Path(spec_out))
+    if note_out:
+        artifacts["provenance_note"] = str(Path(note_out))
+    if not artifacts:
+        raise ValueError("Provide --out-dir, --spec-out, or --note-out.")
+
+    if "candidate_spec" in artifacts:
+        spec_path = Path(artifacts["candidate_spec"])
+        spec_path.parent.mkdir(parents=True, exist_ok=True)
+        spec_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    else:
+        spec_path = Path("candidate_spec.json")
+
+    if "provenance_note" in artifacts:
+        note_path = Path(artifacts["provenance_note"])
+        note_path.parent.mkdir(parents=True, exist_ok=True)
+        note = render_effectiveness_candidate_provenance_note(
+            spec_name=str(payload["spec_name"]),
+            spec_path=str(_relative_repo_path(spec_path) if spec_path.is_absolute() else spec_path),
+        )
+        note_path.write_text(note + ("" if note.endswith("\n") else "\n"), encoding="utf-8")
+
+    return {
+        "template_spec_name": str(payload["spec_name"]),
+        "provenance_placeholder": str(payload["provenance"]),
+        "warnings": [
+            "Template values are seeded from the current geometry baseline and must be replaced with real candidate evidence before comparison or adoption.",
+            "Do not treat the generated candidate template as validated hardware truth.",
+        ],
+        "artifacts": artifacts,
+    }
+

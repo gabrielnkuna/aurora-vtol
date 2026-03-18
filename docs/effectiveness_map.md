@@ -177,6 +177,26 @@ This is the intended intake path for future CAD-, CFD-, or bench-derived candida
 
 That comparison workflow still does not validate physics by itself. It makes changes inspectable and versionable.
 
+## Starter candidate template
+
+Aurora now has a template workflow for the handoff itself:
+
+```bash
+uv run aurora-vtol alloc effectiveness-template   --out-dir runs/effectiveness_candidate_template
+```
+
+That writes:
+
+- `candidate_spec.json`
+- `provenance_template.md`
+
+The tracked examples are:
+
+- [`data/effectiveness_specs/aurora_ring32_candidate_template_v1.json`](../data/effectiveness_specs/aurora_ring32_candidate_template_v1.json)
+- [`docs/effectiveness_candidate_provenance_template.md`](effectiveness_candidate_provenance_template.md)
+
+Use them as the starting point for future CAD-, CFD-, or bench-derived candidates. They are scaffolding, not validated coefficients.
+
 ## Recommended next upgrades
 
 1. replace the provisional geometry-seeded spec with a CAD-, CFD-, or test-derived spec

@@ -45,6 +45,7 @@ from aurora_vtol.maneuver_analysis import render_maneuver_pack_markdown, tune_ma
 from aurora_vtol.effectiveness_workflows import (
     build_effectiveness_comparison_report,
     build_effectiveness_report,
+    write_effectiveness_candidate_template_outputs,
     write_effectiveness_comparison_outputs,
     write_effectiveness_report_outputs,
 )
@@ -1668,6 +1669,27 @@ def alloc_effectiveness_report(
         table_out=table_out,
         source_out=source_out,
     )
+    typer.echo(json.dumps(report, indent=2))
+
+
+@alloc_app.command("effectiveness-template")
+def alloc_effectiveness_template(
+    out_dir: str = typer.Option("runs/effectiveness_candidate_template", "--out-dir", help="Directory for a starter candidate spec and provenance note"),
+    spec_out: str = typer.Option("", "--spec-out", help="Optional output path for the candidate spec JSON"),
+    note_out: str = typer.Option("", "--note-out", help="Optional output path for the provenance note markdown"),
+    spec_name: str = typer.Option("", "--spec-name", help="Optional candidate spec name override"),
+    provenance: str = typer.Option("", "--provenance", help="Optional provenance placeholder override"),
+):
+    try:
+        report = write_effectiveness_candidate_template_outputs(
+            out_dir=out_dir,
+            spec_out=spec_out,
+            note_out=note_out,
+            spec_name=spec_name or None,
+            provenance=provenance or None,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     typer.echo(json.dumps(report, indent=2))
 
 

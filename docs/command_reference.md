@@ -112,6 +112,23 @@ This writes a small artifact pack, including:
 - `materialized_table.json`
 - `source_spec.json` when the source is a geometry seed
 
+### `aurora-vtol alloc effectiveness-template`
+
+Generate a starter candidate spec and a provenance-note template.
+
+Use this when you want a clean handoff package for CAD, CFD, or bench contributors before they produce a real candidate source.
+
+Example:
+
+```bash
+uv run aurora-vtol alloc effectiveness-template   --out-dir runs/effectiveness_candidate_template
+```
+
+This writes:
+
+- `candidate_spec.json`
+- `provenance_template.md`
+
 ### `aurora-vtol alloc effectiveness-compare`
 
 Compare a candidate effectiveness source against the current baseline.

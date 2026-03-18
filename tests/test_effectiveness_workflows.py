@@ -5,11 +5,14 @@ from pathlib import Path
 
 from aurora_vtol.effectiveness_workflows import (
     DEFAULT_GEOMETRY_SEED_SPEC,
+    build_effectiveness_candidate_template,
     build_effectiveness_comparison_report,
     build_effectiveness_report,
     infer_effectiveness_summary_format,
+    render_effectiveness_candidate_provenance_note,
     render_effectiveness_comparison_report,
     render_effectiveness_report,
+    write_effectiveness_candidate_template_outputs,
     write_effectiveness_comparison_outputs,
     write_effectiveness_report_outputs,
 )
@@ -33,6 +36,31 @@ class EffectivenessWorkflowTests(unittest.TestCase):
         self.assertIsNone(spec)
         self.assertEqual(table.fan_count, 16)
         self.assertIsNone(report['spec_summary'])
+
+    def test_build_effectiveness_candidate_template_has_placeholder_provenance(self):
+        payload = build_effectiveness_candidate_template()
+        self.assertEqual(payload['segment_count'], 32)
+        self.assertIn('replace', payload['provenance'].lower())
+
+    def test_render_effectiveness_candidate_provenance_note_has_sections(self):
+        note = render_effectiveness_candidate_provenance_note(
+            spec_name='candidate-spec',
+            spec_path='data/effectiveness_specs/candidate.json',
+        )
+        self.assertIn('# Aurora VTOL effectiveness candidate provenance note', note)
+        self.assertIn('## Source evidence', note)
+        self.assertIn('candidate-spec', note)
+
+    def test_write_effectiveness_candidate_template_outputs_writes_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / 'candidate_template'
+            report = write_effectiveness_candidate_template_outputs(out_dir=str(out_dir))
+            self.assertTrue((out_dir / 'candidate_spec.json').exists())
+            self.assertTrue((out_dir / 'provenance_template.md').exists())
+            payload = json.loads((out_dir / 'candidate_spec.json').read_text(encoding='utf-8'))
+            self.assertEqual(payload['segment_count'], 32)
+            self.assertIn('template_spec_name', report)
+            self.assertIn('warnings', report)
 
     def test_build_effectiveness_comparison_report_requires_candidate(self):
         with self.assertRaises(ValueError):
