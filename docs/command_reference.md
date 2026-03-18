@@ -208,6 +208,26 @@ This writes a switch pack, including:
 - `backup/<target-basename>.json`
 - `applied/<target-basename>.json`
 
+### `aurora-vtol alloc effectiveness-rollback`
+
+Restore the previous baseline asset from an applied switch pack with forward-recovery artifacts.
+
+Use this after `effectiveness-switch` when you want to return the target asset to the backed-up pre-switch state. Applying requires `--out-dir` so the rollback pack preserves the current target before it is restored.
+
+Example:
+
+```bash
+uv run aurora-vtol alloc effectiveness-rollback   --switch-manifest runs/effectiveness_switch_reviewed_candidate/switch_manifest.json   --out-dir runs/effectiveness_rollback_reviewed_candidate
+```
+
+This writes a rollback pack, including:
+
+- `summary.json`
+- `summary.md`
+- `rollback_manifest.json`
+- `pre_rollback/<target-basename>.json`
+- `restored/<target-basename>.json`
+
 ### `aurora-vtol alloc effectiveness-compare`
 
 Compare a candidate effectiveness source against the current baseline.

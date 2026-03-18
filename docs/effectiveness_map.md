@@ -223,7 +223,15 @@ uv run aurora-vtol alloc effectiveness-switch   --promotion-manifest runs/effect
 
 That switch updates the baseline asset referenced by the promotion manifest. In the current reviewed example, the target is the tracked table asset `data/effectiveness/aurora_ring32_provisional_v1.json`. It does not change the allocator's geometry-seeded runtime default unless the promotion pack itself targets that runtime source.
 
-The validation gate is intentionally strict about obvious scaffolding signals like template identity, placeholder provenance, and unchanged baseline-like content. The adoption gate is stricter still: it expects explicit evidence fields, a reviewed or accepted validation state, and a materially meaningful change before a candidate is marked `adoptable`. The promotion gate only stages replacement when the candidate is already adoptable and the candidate source kind matches the chosen baseline target kind. The switch gate then requires a staged promotion pack, an existing target asset, and a writable rollback trail before it applies the new baseline.
+If you need to restore the pre-switch state, run the rollback workflow against the applied switch pack:
+
+```bash
+uv run aurora-vtol alloc effectiveness-rollback   --switch-manifest runs/effectiveness_switch_reviewed_candidate/switch_manifest.json   --out-dir runs/effectiveness_rollback_reviewed_candidate
+```
+
+That rollback restores the target asset from the switch pack's `previous_target_backup`, while also preserving the current target in a forward-recovery snapshot before the restore happens.
+
+The validation gate is intentionally strict about obvious scaffolding signals like template identity, placeholder provenance, and unchanged baseline-like content. The adoption gate is stricter still: it expects explicit evidence fields, a reviewed or accepted validation state, and a materially meaningful change before a candidate is marked `adoptable`. The promotion gate only stages replacement when the candidate is already adoptable and the candidate source kind matches the chosen baseline target kind. The switch gate then requires a staged promotion pack, an existing target asset, and a writable rollback trail before it applies the new baseline. The rollback gate mirrors that discipline: it only restores from an already applied switch pack, and it writes forward-recovery artifacts before touching the target.
 
 ## Recommended next upgrades
 

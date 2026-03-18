@@ -1617,6 +1617,275 @@ def write_effectiveness_switch_outputs(
     return updated
 
 
+def build_effectiveness_rollback_report(
+    *,
+    switch_manifest_path: str | Path | None = None,
+    switch_dir: str | Path | None = None,
+    target_path_override: str | Path | None = None,
+) -> tuple[dict, dict]:
+    if bool(switch_manifest_path) == bool(switch_dir):
+        raise ValueError("Provide exactly one of --switch-manifest or --switch-dir.")
+
+    manifest_input = Path(switch_manifest_path) if switch_manifest_path else Path(switch_dir) / "switch_manifest.json"
+    manifest_resolved = _resolve_repo_input_path(manifest_input)
+    if not manifest_resolved.exists():
+        raise ValueError(f"Switch manifest not found: {manifest_input}")
+
+    manifest = json.loads(manifest_resolved.read_text(encoding="utf-8"))
+    blocking_issues: list[str] = []
+    review_notes: list[str] = []
+    passed_checks: list[str] = []
+
+    switch_status = str(manifest.get("switch_status") or "")
+    if switch_status != "applied":
+        blocking_issues.append(
+            f"Switch manifest status is {switch_status or 'unknown'}, so rollback is blocked."
+        )
+    else:
+        passed_checks.append("Switch manifest is applied and eligible for rollback.")
+
+    target_kind = str(manifest.get("target_kind") or "")
+    if target_kind not in {"table", "geometry-seed"}:
+        blocking_issues.append(
+            "Switch target kind is not supported for the rollback workflow."
+        )
+    else:
+        passed_checks.append("Switch target kind is supported for rollback.")
+
+    manifest_target_value = str(manifest.get("target_path") or "")
+    target_input: Path | None = None
+    target_resolved: Path | None = None
+    if target_path_override:
+        target_input = Path(target_path_override)
+        review_notes.append("Target path override is active for this rollback assessment.")
+    elif manifest_target_value:
+        target_input = Path(manifest_target_value)
+    else:
+        blocking_issues.append("Switch manifest does not include a target path for rollback.")
+
+    if target_input is not None:
+        target_resolved = _resolve_repo_input_path(target_input)
+        if not target_resolved.exists():
+            blocking_issues.append(
+                f"Target baseline path does not exist: {_relative_repo_path(target_resolved)}"
+            )
+        else:
+            passed_checks.append("Target baseline path exists and can be backed up before rollback.")
+
+    rollback_source_value = str(manifest.get("previous_target_backup") or "")
+    rollback_source_resolved: Path | None = None
+    if not rollback_source_value:
+        blocking_issues.append("Switch manifest does not include a rollback source path.")
+    else:
+        rollback_source_resolved = _resolve_repo_input_path(rollback_source_value)
+        if not rollback_source_resolved.exists():
+            blocking_issues.append(
+                f"Rollback source path does not exist: {_relative_repo_path(rollback_source_resolved)}"
+            )
+        else:
+            passed_checks.append("Rollback source artifact exists and is ready to restore.")
+
+    candidate_note_value = str(manifest.get("candidate_note_path") or "")
+    candidate_note_resolved: Path | None = None
+    if candidate_note_value:
+        candidate_note_resolved = _resolve_repo_input_path(candidate_note_value)
+        if candidate_note_resolved.exists():
+            passed_checks.append("Candidate note is available for the rollback pack provenance trail.")
+        else:
+            review_notes.append(
+                "Candidate note path from the switch manifest does not exist; the rollback pack will omit the copied note."
+            )
+    else:
+        review_notes.append(
+            "Switch manifest does not include a candidate note path; the rollback pack will omit the copied note."
+        )
+
+    if target_resolved is not None and rollback_source_resolved is not None:
+        if target_resolved.suffix.lower() != rollback_source_resolved.suffix.lower():
+            review_notes.append(
+                "Target and rollback source use different file suffixes; verify the target kind before applying rollback."
+            )
+
+    rollback_status = "blocked" if blocking_issues else "ready"
+    report = {
+        "rollback_status": rollback_status,
+        "switch_status": switch_status,
+        "target_kind": target_kind,
+        "switch_manifest_path": _relative_repo_path(manifest_resolved),
+        "target_path": _relative_repo_path(target_resolved) if target_resolved is not None else manifest_target_value,
+        "rollback_source_path": _relative_repo_path(rollback_source_resolved) if rollback_source_resolved is not None else rollback_source_value,
+        "target_overridden": bool(target_path_override),
+        "candidate_identity": manifest.get("candidate_identity"),
+        "candidate_source_path": manifest.get("candidate_source_path"),
+        "candidate_note_path": manifest.get("candidate_note_path"),
+        "promotion_manifest_path": manifest.get("promotion_manifest_path"),
+        "blocking_issues": blocking_issues,
+        "review_notes": review_notes,
+        "passed_checks": passed_checks,
+        "warnings": list(blocking_issues) + list(review_notes),
+    }
+    rollback_context = {
+        "switch_manifest_path": manifest_resolved,
+        "target_path": target_resolved,
+        "rollback_source_path": rollback_source_resolved,
+        "candidate_note_path": candidate_note_resolved,
+        "manifest": manifest,
+    }
+    return report, rollback_context
+
+
+def render_effectiveness_rollback_report(report: dict, *, format_name: str) -> str:
+    if format_name == "json":
+        return json.dumps(report, indent=2)
+    sections = []
+    sections.append(_render_mapping_section("Rollback Result", {
+        "rollback_status": report.get("rollback_status"),
+        "switch_status": report.get("switch_status"),
+        "target_kind": report.get("target_kind"),
+        "target_path": report.get("target_path"),
+        "rollback_source_path": report.get("rollback_source_path"),
+        "candidate_identity": report.get("candidate_identity"),
+        "target_overridden": report.get("target_overridden"),
+    }, format_name=format_name))
+    sections.append(_render_mapping_section("Switch Pack", {
+        "switch_manifest_path": report.get("switch_manifest_path"),
+        "promotion_manifest_path": report.get("promotion_manifest_path"),
+        "candidate_source_path": report.get("candidate_source_path"),
+        "candidate_note_path": report.get("candidate_note_path"),
+    }, format_name=format_name))
+    if format_name == "markdown":
+        lines = ["# effectiveness baseline rollback assessment", ""]
+        lines.extend(section for section in sections if section)
+        lines.append("## Blocking Issues")
+        lines.append("")
+        blocking = list(report.get("blocking_issues", []))
+        lines.extend(f"- {item}" for item in blocking) if blocking else lines.append("- none")
+        lines.append("")
+        lines.append("## Review Notes")
+        lines.append("")
+        review_notes = list(report.get("review_notes", []))
+        lines.extend(f"- {item}" for item in review_notes) if review_notes else lines.append("- none")
+        lines.append("")
+        lines.append("## Passed Checks")
+        lines.append("")
+        passed = list(report.get("passed_checks", []))
+        lines.extend(f"- {item}" for item in passed) if passed else lines.append("- none")
+        lines.append("")
+        return "\n".join(lines)
+    lines = ["effectiveness baseline rollback assessment", ""]
+    lines.extend(section for section in sections if section)
+    for title, key in (("Blocking Issues", "blocking_issues"), ("Review Notes", "review_notes"), ("Passed Checks", "passed_checks")):
+        lines.append(title)
+        items = list(report.get(key, []))
+        if items:
+            lines.extend(f"- {item}" for item in items)
+        else:
+            lines.append("- none")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def write_effectiveness_rollback_outputs(
+    report: dict,
+    rollback_context: dict,
+    *,
+    out_dir: str = "",
+    summary_out: str = "",
+    summary_format: str = "auto",
+    apply: bool = True,
+) -> dict:
+    if apply and not out_dir:
+        raise ValueError("out_dir is required when apply=True so the baseline rollback keeps a forward-recovery trail.")
+
+    updated = dict(report)
+    artifacts = dict(updated.get("artifacts", {}))
+    switch_manifest_path = Path(rollback_context["switch_manifest_path"])
+    target_path = rollback_context.get("target_path")
+    rollback_source_path = rollback_context.get("rollback_source_path")
+    candidate_note_path = rollback_context.get("candidate_note_path")
+
+    def write_json(path: Path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    def copy_file(src: Path, dst: Path) -> None:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+
+    if out_dir:
+        out_path = Path(out_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        artifacts.update({
+            "summary_json": str(out_path / "summary.json"),
+            "summary_markdown": str(out_path / "summary.md"),
+            "rollback_manifest": str(out_path / "rollback_manifest.json"),
+            "input_switch_manifest": str(out_path / "input_switch_manifest.json"),
+        })
+        if candidate_note_path is not None and Path(candidate_note_path).exists():
+            artifacts["candidate_note_copy"] = str(out_path / "candidate_note.md")
+        if apply and updated.get("rollback_status") != "blocked" and target_path is not None:
+            target_name = Path(target_path).name
+            artifacts["pre_rollback_target_backup"] = str(out_path / "pre_rollback" / target_name)
+            artifacts["restored_target_snapshot"] = str(out_path / "restored" / target_name)
+
+    if artifacts:
+        updated["artifacts"] = artifacts
+
+    if apply and updated.get("rollback_status") != "blocked":
+        if target_path is None or rollback_source_path is None:
+            raise ValueError("Rollback context is incomplete; target and rollback source paths are required.")
+        copy_file(Path(target_path), Path(artifacts["pre_rollback_target_backup"]))
+        copy_file(Path(rollback_source_path), Path(target_path))
+        copy_file(Path(target_path), Path(artifacts["restored_target_snapshot"]))
+        updated["rollback_status"] = "applied"
+        passed_checks = list(updated.get("passed_checks", []))
+        applied_msg = "Rollback source applied to target baseline path."
+        if applied_msg not in passed_checks:
+            passed_checks.append(applied_msg)
+        updated["passed_checks"] = passed_checks
+
+    rollback_manifest = {
+        "rollback_status": updated.get("rollback_status"),
+        "switch_status": updated.get("switch_status"),
+        "target_kind": updated.get("target_kind"),
+        "target_path": updated.get("target_path"),
+        "rollback_source_path": updated.get("rollback_source_path"),
+        "switch_manifest_path": updated.get("switch_manifest_path"),
+        "promotion_manifest_path": updated.get("promotion_manifest_path"),
+        "candidate_identity": updated.get("candidate_identity"),
+        "candidate_source_path": updated.get("candidate_source_path"),
+        "candidate_note_path": updated.get("candidate_note_path"),
+        "pre_rollback_target_backup": artifacts.get("pre_rollback_target_backup"),
+        "restored_target_snapshot": artifacts.get("restored_target_snapshot"),
+        "forward_switch_ready": bool(artifacts.get("pre_rollback_target_backup")),
+    }
+
+    if out_dir:
+        write_json(Path(artifacts["summary_json"]), updated)
+        markdown = render_effectiveness_rollback_report(updated, format_name="markdown")
+        Path(artifacts["summary_markdown"]).write_text(
+            markdown + ("" if markdown.endswith("\n") else "\n"),
+            encoding="utf-8",
+        )
+        write_json(Path(artifacts["rollback_manifest"]), rollback_manifest)
+        copy_file(switch_manifest_path, Path(artifacts["input_switch_manifest"]))
+        if artifacts.get("candidate_note_copy") and candidate_note_path is not None and Path(candidate_note_path).exists():
+            copy_file(Path(candidate_note_path), Path(artifacts["candidate_note_copy"]))
+
+    if summary_out:
+        resolved_format = infer_effectiveness_summary_format(summary_out, summary_format)
+        rendered = render_effectiveness_rollback_report(updated, format_name=resolved_format)
+        summary_path = Path(summary_out)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(
+            rendered + ("" if rendered.endswith("\n") else "\n"),
+            encoding="utf-8",
+        )
+        updated["summary_format"] = resolved_format
+
+    return updated
+
+
 def build_effectiveness_candidate_template(
     *,
     spec_name: str | None = None,

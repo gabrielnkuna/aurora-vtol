@@ -47,6 +47,7 @@ from aurora_vtol.effectiveness_workflows import (
     build_effectiveness_comparison_report,
     build_effectiveness_promotion_report,
     build_effectiveness_report,
+    build_effectiveness_rollback_report,
     build_effectiveness_switch_report,
     build_effectiveness_validation_report,
     write_effectiveness_adoption_outputs,
@@ -54,6 +55,7 @@ from aurora_vtol.effectiveness_workflows import (
     write_effectiveness_comparison_outputs,
     write_effectiveness_promotion_outputs,
     write_effectiveness_report_outputs,
+    write_effectiveness_rollback_outputs,
     write_effectiveness_switch_outputs,
     write_effectiveness_validation_outputs,
 )
@@ -1835,6 +1837,36 @@ def alloc_effectiveness_switch(
         report = write_effectiveness_switch_outputs(
             report,
             switch_context,
+            out_dir=out_dir,
+            summary_out=summary_out,
+            summary_format=summary_format,
+            apply=apply,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo(json.dumps(report, indent=2))
+
+
+@alloc_app.command("effectiveness-rollback")
+def alloc_effectiveness_rollback(
+    switch_manifest: str = typer.Option("", "--switch-manifest", help="Switch manifest JSON from an applied effectiveness switch pack"),
+    switch_dir: str = typer.Option("", "--switch-dir", help="Switch pack directory containing switch_manifest.json"),
+    target_override: str = typer.Option("", "--target-override", help="Optional override target path instead of the switch manifest target path"),
+    apply: bool = typer.Option(True, "--apply/--no-apply", help="Apply the rollback source to the target path; applying requires --out-dir for forward-recovery artifacts"),
+    out_dir: str = typer.Option("", "--out-dir", help="Directory for rollback summary, forward-recovery backup, and rollback manifest artifacts"),
+    summary_out: str = typer.Option("", "--summary-out", help="Optional rollback summary path (.json, .md, .txt)"),
+    summary_format: str = typer.Option("auto", "--summary-format", help="Rollback summary output format: auto, json, markdown, text"),
+):
+    try:
+        report, rollback_context = build_effectiveness_rollback_report(
+            switch_manifest_path=switch_manifest or None,
+            switch_dir=switch_dir or None,
+            target_path_override=target_override or None,
+        )
+        report = write_effectiveness_rollback_outputs(
+            report,
+            rollback_context,
             out_dir=out_dir,
             summary_out=summary_out,
             summary_format=summary_format,
