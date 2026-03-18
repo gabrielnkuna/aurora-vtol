@@ -805,6 +805,303 @@ def write_effectiveness_validation_outputs(
     return updated
 
 
+
+
+
+def _parse_candidate_provenance_note(note_path: str | Path | None) -> dict | None:
+    if not note_path:
+        return None
+    resolved = Path(note_path).resolve()
+    text = resolved.read_text(encoding="utf-8")
+    fields: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped.startswith("- "):
+            continue
+        body = stripped[2:]
+        if ":" not in body:
+            continue
+        key, value = body.split(":", 1)
+        normalized_key = str(key).strip()
+        if normalized_key.lower() == "todo":
+            continue
+        fields[normalized_key] = str(value).strip().strip("`")
+    return {
+        "note_path": _relative_repo_path(resolved),
+        "fields": fields,
+        "raw_text": text,
+    }
+
+
+def _recognized_source_type(value: str | None) -> bool:
+    normalized = str(value or "").strip().lower()
+    return normalized in {"cad", "cfd", "bench", "mixed"}
+
+
+def _is_material_delta_significant(delta_summary: dict | None, tolerance: float) -> bool:
+    if delta_summary is None:
+        return False
+    return any(abs(float(value)) > tolerance for value in delta_summary.values())
+
+
+def build_effectiveness_adoption_report(
+    *,
+    candidate_spec_path: str | Path | None = None,
+    candidate_table_path: str | Path | None = None,
+    candidate_note_path: str | Path | None = None,
+    baseline_spec_path: str | Path | None = None,
+    baseline_table_path: str | Path | None = None,
+    delta_tolerance: float = 1e-9,
+    material_delta_tolerance: float = 1e-6,
+) -> tuple[dict, NominalEffectivenessTable, GeometrySeedSpec | None, NominalEffectivenessTable, GeometrySeedSpec | None, dict | None]:
+    if material_delta_tolerance < 0.0:
+        raise ValueError("material_delta_tolerance must be non-negative")
+
+    validation_report, baseline_table, baseline_spec, candidate_table, candidate_spec = build_effectiveness_validation_report(
+        candidate_spec_path=candidate_spec_path,
+        candidate_table_path=candidate_table_path,
+        baseline_spec_path=baseline_spec_path,
+        baseline_table_path=baseline_table_path,
+        delta_tolerance=delta_tolerance,
+    )
+    candidate_note = _parse_candidate_provenance_note(candidate_note_path)
+
+    blocking_issues: list[str] = []
+    review_notes: list[str] = []
+    passed_checks: list[str] = []
+
+    if validation_report["status"] == "risk":
+        blocking_issues.append("Candidate failed the validation gate and should not be adopted.")
+    elif validation_report["status"] == "caution":
+        review_notes.append("Candidate passed validation with advisory issues that still require review.")
+    else:
+        passed_checks.append("Candidate passed the validation gate without advisory issues.")
+
+    note_summary = None
+    if candidate_note is None:
+        blocking_issues.append("Candidate provenance note is required for adoption decisions.")
+    else:
+        note_fields = dict(candidate_note.get("fields", {}))
+        note_summary = {
+            "note_path": candidate_note["note_path"],
+            "fields": note_fields,
+        }
+        passed_checks.append("Candidate provenance note provided.")
+
+        required_fields = (
+            "source_type",
+            "source_reference",
+            "extraction_method",
+            "source_revision",
+            "validation_state",
+            "reviewer",
+        )
+        missing_fields = [field for field in required_fields if _is_placeholder_text(note_fields.get(field))]
+        if missing_fields:
+            blocking_issues.append(
+                "Candidate provenance note still has placeholder or missing fields: " + ", ".join(missing_fields) + "."
+            )
+        else:
+            passed_checks.append("Candidate provenance note includes the required evidence fields.")
+
+        note_spec_name = note_fields.get("spec_name")
+        if not _is_placeholder_text(note_spec_name):
+            if str(note_spec_name).strip() == str(validation_report["candidate_identity"]).strip():
+                passed_checks.append("Candidate provenance note identity matches the candidate identity.")
+            else:
+                review_notes.append("Candidate provenance note spec_name does not match the candidate identity.")
+
+        note_source_type = note_fields.get("source_type")
+        if not _is_placeholder_text(note_source_type):
+            if _recognized_source_type(note_source_type):
+                passed_checks.append("Candidate provenance note uses a recognized source_type.")
+            else:
+                review_notes.append("Candidate provenance note source_type is not one of CAD / CFD / bench / mixed.")
+
+        validation_state = str(note_fields.get("validation_state", "")).strip().lower()
+        if validation_state in {"reviewed", "accepted"}:
+            passed_checks.append("Candidate provenance note records a reviewed or accepted validation state.")
+        elif validation_state and not _is_placeholder_text(validation_state):
+            review_notes.append(f"Candidate validation_state is '{validation_state}', not reviewed/accepted yet.")
+
+    material_delta_significant = _is_material_delta_significant(
+        validation_report.get("delta_summary"),
+        material_delta_tolerance,
+    )
+    if validation_report["compatibility"]["comparable"]:
+        if material_delta_significant:
+            passed_checks.append("Candidate differs materially from the current baseline beyond the adoption tolerance.")
+        else:
+            review_notes.append("Candidate does not materially differ from the current baseline beyond the adoption tolerance.")
+
+    if blocking_issues:
+        adoption_status = "rejected"
+    elif review_notes:
+        adoption_status = "needs-review"
+    else:
+        adoption_status = "adoptable"
+
+    report = {
+        "adoption_status": adoption_status,
+        "validation_status": validation_report["status"],
+        "delta_tolerance": float(delta_tolerance),
+        "material_delta_tolerance": float(material_delta_tolerance),
+        "material_delta_significant": bool(material_delta_significant),
+        "baseline": validation_report["baseline"],
+        "candidate": validation_report["candidate"],
+        "candidate_identity": validation_report["candidate_identity"],
+        "candidate_provenance": validation_report["candidate_provenance"],
+        "candidate_note": note_summary,
+        "compatibility": validation_report["compatibility"],
+        "delta_summary": validation_report["delta_summary"],
+        "validation_blocking_issues": list(validation_report.get("blocking_issues", [])),
+        "validation_advisory_issues": list(validation_report.get("advisory_issues", [])),
+        "blocking_issues": blocking_issues,
+        "review_notes": review_notes,
+        "passed_checks": passed_checks,
+        "warnings": list(blocking_issues) + list(review_notes),
+    }
+    return report, baseline_table, baseline_spec, candidate_table, candidate_spec, candidate_note
+
+
+def render_effectiveness_adoption_report(report: dict, *, format_name: str) -> str:
+    if format_name == "json":
+        return json.dumps(report, indent=2)
+    sections = []
+    sections.append(_render_mapping_section("Adoption Result", {
+        "adoption_status": report.get("adoption_status"),
+        "validation_status": report.get("validation_status"),
+        "material_delta_tolerance": report.get("material_delta_tolerance"),
+        "material_delta_significant": report.get("material_delta_significant"),
+        "candidate_identity": report.get("candidate_identity"),
+    }, format_name=format_name))
+    baseline = dict(report.get("baseline", {}))
+    candidate = dict(report.get("candidate", {}))
+    sections.append(_render_mapping_section("Baseline Source", {
+        "source_kind": baseline.get("source_kind"),
+        "source_path": baseline.get("source_path"),
+    }, format_name=format_name))
+    sections.append(_render_mapping_section("Candidate Source", {
+        "source_kind": candidate.get("source_kind"),
+        "source_path": candidate.get("source_path"),
+    }, format_name=format_name))
+    note = report.get("candidate_note")
+    if isinstance(note, dict):
+        note_fields = dict(note.get("fields", {}))
+        sections.append(_render_mapping_section("Candidate Note", {
+            "note_path": note.get("note_path"),
+            "source_type": note_fields.get("source_type"),
+            "validation_state": note_fields.get("validation_state"),
+            "reviewer": note_fields.get("reviewer"),
+        }, format_name=format_name))
+    sections.append(_render_mapping_section("Compatibility", report.get("compatibility", {}), format_name=format_name))
+    if isinstance(report.get("delta_summary"), dict):
+        sections.append(_render_mapping_section("Delta Summary", report["delta_summary"], format_name=format_name))
+    if format_name == "markdown":
+        lines = ["# effectiveness adoption assessment", ""]
+        lines.extend(section for section in sections if section)
+        lines.append("## Blocking Issues")
+        lines.append("")
+        blocking = list(report.get("blocking_issues", []))
+        lines.extend(f"- {item}" for item in blocking) if blocking else lines.append("- none")
+        lines.append("")
+        lines.append("## Review Notes")
+        lines.append("")
+        review_notes = list(report.get("review_notes", []))
+        lines.extend(f"- {item}" for item in review_notes) if review_notes else lines.append("- none")
+        lines.append("")
+        lines.append("## Passed Checks")
+        lines.append("")
+        passed = list(report.get("passed_checks", []))
+        lines.extend(f"- {item}" for item in passed) if passed else lines.append("- none")
+        lines.append("")
+        return "\n".join(lines)
+    lines = ["effectiveness adoption assessment", ""]
+    lines.extend(section for section in sections if section)
+    for title, key in (("Blocking Issues", "blocking_issues"), ("Review Notes", "review_notes"), ("Passed Checks", "passed_checks")):
+        lines.append(title)
+        items = list(report.get(key, []))
+        if items:
+            lines.extend(f"- {item}" for item in items)
+        else:
+            lines.append("- none")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def write_effectiveness_adoption_outputs(
+    report: dict,
+    baseline_table: NominalEffectivenessTable,
+    candidate_table: NominalEffectivenessTable,
+    *,
+    baseline_spec: GeometrySeedSpec | None = None,
+    candidate_spec: GeometrySeedSpec | None = None,
+    candidate_note: dict | None = None,
+    out_dir: str = "",
+    summary_out: str = "",
+    summary_format: str = "auto",
+) -> dict:
+    updated = dict(report)
+    artifacts = dict(updated.get("artifacts", {}))
+
+    def write_json(path: Path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    baseline_table_payload = effectiveness_table_to_payload(baseline_table)
+    candidate_table_payload = effectiveness_table_to_payload(candidate_table)
+    baseline_source_payload = geometry_seed_spec_to_payload(baseline_spec) if baseline_spec is not None else baseline_table_payload
+    candidate_source_payload = geometry_seed_spec_to_payload(candidate_spec) if candidate_spec is not None else candidate_table_payload
+
+    if out_dir:
+        out_path = Path(out_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        artifacts.update({
+            "summary_json": str(out_path / "summary.json"),
+            "summary_markdown": str(out_path / "summary.md"),
+            "baseline_table": str(out_path / "baseline_table.json"),
+            "candidate_table": str(out_path / "candidate_table.json"),
+            "baseline_source": str(out_path / ("baseline_spec.json" if baseline_spec is not None else "baseline_source_table.json")),
+            "candidate_source": str(out_path / ("candidate_spec.json" if candidate_spec is not None else "candidate_source_table.json")),
+        })
+        if candidate_note is not None:
+            artifacts["candidate_note_fields"] = str(out_path / "candidate_note_fields.json")
+            artifacts["candidate_note_copy"] = str(out_path / "candidate_note.md")
+
+    if artifacts:
+        updated["artifacts"] = artifacts
+
+    if out_dir:
+        write_json(Path(artifacts["summary_json"]), updated)
+        markdown = render_effectiveness_adoption_report(updated, format_name="markdown")
+        Path(artifacts["summary_markdown"]).write_text(
+            markdown + ("" if markdown.endswith("\n") else "\n"),
+            encoding="utf-8",
+        )
+        write_json(Path(artifacts["baseline_table"]), baseline_table_payload)
+        write_json(Path(artifacts["candidate_table"]), candidate_table_payload)
+        write_json(Path(artifacts["baseline_source"]), baseline_source_payload)
+        write_json(Path(artifacts["candidate_source"]), candidate_source_payload)
+        if candidate_note is not None:
+            write_json(Path(artifacts["candidate_note_fields"]), dict(candidate_note.get("fields", {})))
+            note_text = str(candidate_note.get("raw_text", ""))
+            Path(artifacts["candidate_note_copy"]).write_text(
+                note_text + ("" if note_text.endswith("\n") else "\n"),
+                encoding="utf-8",
+            )
+
+    if summary_out:
+        resolved_format = infer_effectiveness_summary_format(summary_out, summary_format)
+        rendered = render_effectiveness_adoption_report(updated, format_name=resolved_format)
+        summary_path = Path(summary_out)
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(
+            rendered + ("" if rendered.endswith("\n") else "\n"),
+            encoding="utf-8",
+        )
+        updated["summary_format"] = resolved_format
+
+    return updated
 def build_effectiveness_candidate_template(
     *,
     spec_name: str | None = None,

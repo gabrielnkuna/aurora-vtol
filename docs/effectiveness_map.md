@@ -203,7 +203,13 @@ Before comparing or adopting a candidate, run the validation gate:
 uv run aurora-vtol alloc effectiveness-validate   --candidate-spec data/effectiveness_specs/aurora_ring32_candidate_template_v1.json   --out-dir runs/effectiveness_validate_candidate_template
 ```
 
-That command is intentionally strict about obvious scaffolding signals like template identity, placeholder provenance, and unchanged baseline-like content.
+Then run the adoption gate once a provenance note exists:
+
+```bash
+uv run aurora-vtol alloc effectiveness-adoption   --candidate-spec data/effectiveness_specs/aurora_ring32_candidate_template_v1.json   --candidate-note docs/effectiveness_candidate_provenance_template.md   --out-dir runs/effectiveness_adoption_candidate_template
+```
+
+The validation gate is intentionally strict about obvious scaffolding signals like template identity, placeholder provenance, and unchanged baseline-like content. The adoption gate is stricter still: it expects explicit evidence fields, a reviewed or accepted validation state, and a materially meaningful change before a candidate is marked `adoptable`.
 
 ## Recommended next upgrades
 

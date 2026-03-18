@@ -43,9 +43,11 @@ from aurora_vtol.study_workflows import build_coordinate_mission_kwargs, build_p
 from aurora_vtol.fault_workflows import build_fault_spec, resolve_fault_case, run_fault_envelope_report, run_fault_threshold_pack_report, run_fault_threshold_report, select_fault_cases, summarize_fault_case
 from aurora_vtol.maneuver_analysis import render_maneuver_pack_markdown, tune_maneuver_profile
 from aurora_vtol.effectiveness_workflows import (
+    build_effectiveness_adoption_report,
     build_effectiveness_comparison_report,
     build_effectiveness_report,
     build_effectiveness_validation_report,
+    write_effectiveness_adoption_outputs,
     write_effectiveness_candidate_template_outputs,
     write_effectiveness_comparison_outputs,
     write_effectiveness_report_outputs,
@@ -1723,6 +1725,46 @@ def alloc_effectiveness_validate(
         candidate_table_obj,
         baseline_spec=baseline_spec_obj,
         candidate_spec=candidate_spec_obj,
+        out_dir=out_dir,
+        summary_out=summary_out,
+        summary_format=summary_format,
+    )
+    typer.echo(json.dumps(report, indent=2))
+
+
+@alloc_app.command("effectiveness-adoption")
+def alloc_effectiveness_adoption(
+    candidate_spec: str = typer.Option("", "--candidate-spec", help="Candidate geometry-seed spec JSON to assess for adoption"),
+    candidate_table: str = typer.Option("", "--candidate-table", help="Candidate materialized table JSON to assess for adoption"),
+    candidate_note: str = typer.Option("", "--candidate-note", help="Candidate provenance note markdown used to support adoption"),
+    baseline_spec: str = typer.Option("", "--baseline-spec", help="Optional baseline geometry-seed spec JSON; defaults to the built-in Aurora ring32 seed"),
+    baseline_table: str = typer.Option("", "--baseline-table", help="Optional baseline materialized table JSON instead of --baseline-spec"),
+    delta_tol: float = typer.Option(1e-9, "--delta-tol", help="Tolerance below which validation treats a candidate as unchanged from baseline"),
+    material_delta_tol: float = typer.Option(1e-6, "--material-delta-tol", help="Tolerance below which adoption treats a candidate as not materially different from baseline"),
+    out_dir: str = typer.Option("", "--out-dir", help="Optional directory for adoption assessment artifacts"),
+    summary_out: str = typer.Option("", "--summary-out", help="Optional adoption summary path (.json, .md, .txt)"),
+    summary_format: str = typer.Option("auto", "--summary-format", help="Adoption summary output format: auto, json, markdown, text"),
+):
+    try:
+        report, baseline_table_obj, baseline_spec_obj, candidate_table_obj, candidate_spec_obj, candidate_note_obj = build_effectiveness_adoption_report(
+            candidate_spec_path=candidate_spec or None,
+            candidate_table_path=candidate_table or None,
+            candidate_note_path=candidate_note or None,
+            baseline_spec_path=baseline_spec or None,
+            baseline_table_path=baseline_table or None,
+            delta_tolerance=delta_tol,
+            material_delta_tolerance=material_delta_tol,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    report = write_effectiveness_adoption_outputs(
+        report,
+        baseline_table_obj,
+        candidate_table_obj,
+        baseline_spec=baseline_spec_obj,
+        candidate_spec=candidate_spec_obj,
+        candidate_note=candidate_note_obj,
         out_dir=out_dir,
         summary_out=summary_out,
         summary_format=summary_format,

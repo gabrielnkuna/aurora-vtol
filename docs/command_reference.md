@@ -148,6 +148,26 @@ This writes a validation pack, including:
 - `baseline_table.json`
 - `candidate_table.json`
 
+
+### `aurora-vtol alloc effectiveness-adoption`
+
+Assess whether a candidate is ready to adopt into the live nominal authority path.
+
+Use this after validation when you also have a candidate provenance note. The command classifies a candidate as `rejected`, `needs-review`, or `adoptable` based on validation outcome, evidence quality, review state, and material delta from baseline.
+
+Example:
+
+```bash
+uv run aurora-vtol alloc effectiveness-adoption   --candidate-spec data/effectiveness_specs/aurora_ring32_candidate_template_v1.json   --candidate-note docs/effectiveness_candidate_provenance_template.md   --out-dir runs/effectiveness_adoption_candidate_template
+```
+
+This writes an adoption pack, including:
+
+- `summary.json`
+- `summary.md`
+- `candidate_note_fields.json`
+- `candidate_note.md`
+
 ### `aurora-vtol alloc effectiveness-compare`
 
 Compare a candidate effectiveness source against the current baseline.
